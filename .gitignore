@@ -1,0 +1,12 @@
+/vendor/
+/build/
+/coverage/
+/.phpunit.cache/
+/node_modules/
+/tests/Fixtures/tls/
+.env
+.DS_Store
+composer.lock
+/.docs/
+CLAUDE.md
+AGENTS.md

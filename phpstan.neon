@@ -1,0 +1,10 @@
+includes:
+    - vendor/larastan/larastan/extension.neon
+
+parameters:
+    level: 8
+    paths:
+        - src
+        # The host-model fixture that uses HasScarlettClips, so the trait body is
+        # analysed instead of reported as unused.
+        - tests/Fixtures/Models

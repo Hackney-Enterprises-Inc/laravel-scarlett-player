@@ -1,0 +1,25 @@
+{
+  "_about": "Share-built embed iframes, produced by buildEmbedSnippet() from the published @scarlett-player/share@1.17.0 dist/index.js with embedBaseUrl = ScarlettPlayer::embedUrl('paid-1') under the TestCase app key. See PROVENANCE.md.",
+  "playerVersion": "1.17.0",
+  "embedBaseUrl": "http://localhost/v/paid-1?signature=2b4b5d5eca9221580fb863fea7670abccd822e677783efc3f48b7ed6ed70aa3c",
+  "cases": {
+    "share-built": {
+      "context": {
+        "url": "https://host.test/watch/paid-1",
+        "currentTime": 83.7,
+        "isLive": false
+      },
+      "snippet": "<iframe src=\"http://localhost/v/paid-1?signature=2b4b5d5eca9221580fb863fea7670abccd822e677783efc3f48b7ed6ed70aa3c&startTime=83&shareUrl=https%3A%2F%2Fhost.test%2Fwatch%2Fpaid-1\" width=\"640\" height=\"360\" frameborder=\"0\" allow=\"autoplay; fullscreen; picture-in-picture\" allowfullscreen loading=\"lazy\"></iframe>",
+      "src": "http://localhost/v/paid-1?signature=2b4b5d5eca9221580fb863fea7670abccd822e677783efc3f48b7ed6ed70aa3c&startTime=83&shareUrl=https%3A%2F%2Fhost.test%2Fwatch%2Fpaid-1"
+    },
+    "off-domain-share-url": {
+      "context": {
+        "url": "https://evil.example.net/watch?x=1&y=2",
+        "currentTime": 12.2,
+        "isLive": false
+      },
+      "snippet": "<iframe src=\"http://localhost/v/paid-1?signature=2b4b5d5eca9221580fb863fea7670abccd822e677783efc3f48b7ed6ed70aa3c&startTime=12&shareUrl=https%3A%2F%2Fevil.example.net%2Fwatch%3Fx%3D1%26y%3D2\" width=\"640\" height=\"360\" frameborder=\"0\" allow=\"autoplay; fullscreen; picture-in-picture\" allowfullscreen loading=\"lazy\"></iframe>",
+      "src": "http://localhost/v/paid-1?signature=2b4b5d5eca9221580fb863fea7670abccd822e677783efc3f48b7ed6ed70aa3c&startTime=12&shareUrl=https%3A%2F%2Fevil.example.net%2Fwatch%3Fx%3D1%26y%3D2"
+    }
+  }
+}

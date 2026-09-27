@@ -1,0 +1,222 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pint:
+    name: pint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          coverage: none
+
+      - uses: ramsey/composer-install@v4
+
+      - run: vendor/bin/pint --test
+
+  phpstan:
+    name: phpstan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          coverage: none
+
+      - uses: ramsey/composer-install@v4
+
+      - run: vendor/bin/phpstan analyse --no-progress --memory-limit=1G
+
+  em-dashes:
+    name: em dashes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # House style: no em dashes. An em dash is a style violation and this
+      # gate is what keeps it out of a public repo. The one exclusion is the pinned
+      # player bundle (tests/Fixtures/player/<version>/embed.umd.cjs): third-party
+      # output kept byte for byte as npm published it, sha256 in its PROVENANCE.md.
+      - name: no em dashes
+        run: |
+          if LC_ALL=C grep -rn $'\xe2\x80\x94' --exclude-dir=.git --exclude-dir=vendor --exclude-dir=node_modules --exclude=embed.umd.cjs .; then
+            echo "::error::em dash found (see the lines above)"
+            exit 1
+          fi
+
+  tests:
+    name: php ${{ matrix.php }} / laravel ${{ matrix.laravel }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The primary cell: what the package is developed and released against.
+          - php: '8.4'
+            laravel: '13.*'
+            testbench: '11.*'
+          - php: '8.4'
+            laravel: '12.*'
+            testbench: '10.*'
+          - php: '8.3'
+            laravel: '13.*'
+            testbench: '11.*'
+          - php: '8.3'
+            laravel: '12.*'
+            testbench: '10.*'
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+
+      - name: pin the framework for this cell
+        run: >
+          composer require --dev --no-update
+          "laravel/framework:${{ matrix.laravel }}"
+          "orchestra/testbench:${{ matrix.testbench }}"
+
+      - uses: ramsey/composer-install@v4
+        with:
+          dependency-versions: highest
+
+      # --fail-on-empty-test-suite is explicit rather than inherited: a run that
+      # matches no tests is a broken invocation, not a green build. The browser and
+      # integration groups skip here (no SCARLETT_BROWSER, no ffmpeg); their own
+      # jobs below run them.
+      - run: vendor/bin/pest --ci --fail-on-empty-test-suite
+
+  # The beacon store's merge SQL has dialect-specific parts (JSON merge, assignment
+  # order, datetime formats), and the matrix above runs SQLite only. This runs the
+  # beacons feature tests, the store and the migrations among them, on the two
+  # engines hosts deploy on.
+  beacons-databases:
+    name: beacons on ${{ matrix.database }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - database: mysql
+            port: 3306
+            username: root
+          - database: pgsql
+            port: 5432
+            username: postgres
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: scarlett
+          MYSQL_DATABASE: scarlett
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysql -uroot -pscarlett -h127.0.0.1 -e 'select 1'"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: scarlett
+          POSTGRES_DB: scarlett
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: pdo_mysql, pdo_pgsql
+          coverage: none
+
+      - uses: ramsey/composer-install@v4
+
+      - run: vendor/bin/pest --ci --fail-on-empty-test-suite tests/Feature/Beacons tests/Feature/Media/HasScarlettClipsTest.php
+        env:
+          DB_CONNECTION: ${{ matrix.database }}
+          DB_HOST: 127.0.0.1
+          DB_PORT: ${{ matrix.port }}
+          DB_DATABASE: scarlett
+          DB_USERNAME: ${{ matrix.username }}
+          DB_PASSWORD: scarlett
+
+  browser:
+    name: browser (chromium, tls proxy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          coverage: none
+
+      - uses: ramsey/composer-install@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+
+      - run: npm ci
+
+      - run: npx playwright install --with-deps chromium
+
+      # make-cert.sh generates the proxy certificate with openssl on every run, so
+      # its absence has to fail here by name rather than as a skipped test later.
+      - name: openssl is present
+        run: openssl version
+
+      # --group=browser with --fail-on-empty-test-suite: a group that matches
+      # nothing is a broken leg, not a green one.
+      - run: vendor/bin/pest --ci --fail-on-empty-test-suite --group=browser
+        env:
+          SCARLETT_BROWSER: '1'
+
+  integration:
+    name: integration (ffmpeg)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          coverage: none
+
+      - name: install ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          ffmpeg -version | head -n1
+          ffprobe -version | head -n1
+
+      - uses: ramsey/composer-install@v4
+
+      - run: vendor/bin/pest --ci --fail-on-empty-test-suite --group=integration

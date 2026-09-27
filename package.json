@@ -1,0 +1,18 @@
+{
+    "name": "laravel-scarlett-player-dev",
+    "private": true,
+    "description": "Browser test tooling for hei/laravel-scarlett-player. Not published.",
+    "license": "MIT",
+    "type": "module",
+    "engines": {
+        "node": ">=20"
+    },
+    "scripts": {
+        "browser:install": "playwright install chromium",
+        "proxy": "node tests/Browser/support/tls-proxy.mjs",
+        "cert": "sh tests/Browser/support/make-cert.sh"
+    },
+    "devDependencies": {
+        "playwright": "^1.63.0"
+    }
+}

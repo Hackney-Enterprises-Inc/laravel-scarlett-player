@@ -1,0 +1,32 @@
+# shareUrl payloads against embed.allowed_domains = ['allowed.test'].
+# Payloads from the 2026-09-27 review of the embed middleware, fuzzed against WHATWG URL
+# parsing. One per line: the expected verdict (keep or drop), a tab, the raw payload.
+# Only a URL whose host is plain ASCII on allowed.test is kept; percent-encoded or
+# non-ASCII hosts are dropped even where a browser would land them on-domain.
+drop	https://evil.test%5C@allowed.test/
+drop	https://evil%2Etest.allowed.test/
+drop	https://evil.test%2F.allowed.test/
+drop	https://evil.test%23.allowed.test/
+drop	https://evil.test%3F.allowed.test/
+drop	https://evil.test%40.allowed.test/
+drop	https://evil.test%2f%2f.allowed.test/
+drop	https://evil.test／.allowed.test/
+drop	https://evil.test＃.allowed.test/
+drop	https://evil.test？.allowed.test/
+drop	https://evil.test℀.allowed.test/
+drop	https://evil.test。allowed.test/
+drop	https://allowed。test/
+drop	https://allowed.test./
+drop	https://[::1]/
+drop	https://[::ffff:allowed.test]/
+drop	https://evil.test:80.allowed.test/
+drop	https://allowed.test:443@evil.test/
+drop	https:evil.test
+drop	https:/evil.test
+drop	https:///evil.test
+keep	HTTPS://sub.allowed.test/x
+drop	https://evil.test%00.allowed.test/
+drop	https://evil.test%09.allowed.test/
+drop	https://evil.test%E3%80%82allowed.test/
+keep	https://xn--evil.allowed.test/
+drop	https://evil.test%252F.allowed.test/

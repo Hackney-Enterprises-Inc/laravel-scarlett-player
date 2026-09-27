@@ -1,0 +1,124 @@
+{
+  "player": "1.17.0",
+  "capturedAt": "2026-09-27T18:54:25.615Z",
+  "harness": "scripts/capture-wire-fixtures.mjs",
+  "chromium": "151.0.7922.34",
+  "node": "v24.20.0",
+  "files": [
+    "clip.create.json",
+    "clip.retry.json",
+    "custom-wireCustom.fetch.json",
+    "error.fetch.json",
+    "heartbeat.fetch.json",
+    "heartbeat.fetch.live.json",
+    "pause.fetch.json",
+    "playRequest.fetch.json",
+    "preflight.options.json",
+    "qualityChange.fetch.json",
+    "rebufferEnd.fetch.json",
+    "rebufferStart.fetch.json",
+    "seeking.fetch.json",
+    "videoStart.fetch.json",
+    "viewEnd.fetch.destroy.json",
+    "viewEnd.fetch.ended.json",
+    "viewEnd.fetch.error.json",
+    "viewEnd.sendBeacon.live-unload.json",
+    "viewEnd.sendBeacon.unload.json",
+    "viewStart.fetch.json",
+    "viewStart.fetch.live.json",
+    "_session.sequence.json",
+    "manifest.json"
+  ],
+  "absent": [],
+  "assertions": [
+    {
+      "name": "every required fixture was captured",
+      "ok": true
+    },
+    {
+      "name": "no request left 127.0.0.1",
+      "ok": true
+    },
+    {
+      "name": "every beacon body is JSON with playerVersion and playerName",
+      "ok": true,
+      "detail": "75 beacons"
+    },
+    {
+      "name": "fetch beacons carry X-API-Key and X-Wire-Token; the unload beacon carries neither, and api_key in the query",
+      "ok": true
+    },
+    {
+      "name": "the preflight named x-api-key in access-control-request-headers",
+      "ok": true
+    },
+    {
+      "name": "viewEnd unload is the field subset; viewEnd ended has every field",
+      "ok": true
+    },
+    {
+      "name": "a fatal error sends an error beacon with errorCode, then a viewEnd with exitType error",
+      "ok": true
+    },
+    {
+      "name": "custom dimensions sit at the top level of every beacon, types intact",
+      "ok": true
+    },
+    {
+      "name": "clip create and retry share clientRequestId and body (capturedAt aside), VOD fields, CSRF header",
+      "ok": true
+    },
+    {
+      "name": "live heartbeat and live unload viewEnd carry isLive and the latency summary; no VOD beacon has latency keys",
+      "ok": true,
+      "detail": "latency mean 6.13s over 2 readings, lowLatency false"
+    },
+    {
+      "name": "heartbeat watchTime and rebufferCount never decrease (sanity)",
+      "ok": true,
+      "detail": "14 heartbeats"
+    },
+    {
+      "name": "every bus quality:change produced a qualityChange beacon matching a level (SCAR-HLS-3 tripwire)",
+      "ok": true,
+      "detail": "1 of 1"
+    }
+  ],
+  "scenarios": {
+    "full-session": {
+      "beacons": 34,
+      "pageErrors": [],
+      "rebuffer": "stalled",
+      "startupRebuffer": true
+    },
+    "unload": {
+      "beacons": 9,
+      "pageErrors": []
+    },
+    "destroy": {
+      "beacons": 8,
+      "pageErrors": []
+    },
+    "error": {
+      "beacons": 11,
+      "pageErrors": []
+    },
+    "clip": {
+      "beacons": 4,
+      "pageErrors": []
+    },
+    "live": {
+      "beacons": 9,
+      "pageErrors": [],
+      "isLiveByEvent": {
+        "viewEnd": true,
+        "heartbeat": true,
+        "qualityChange": true,
+        "rebufferStart": true,
+        "videoStart": true,
+        "playRequest": true,
+        "viewStart": false
+      }
+    }
+  }
+}

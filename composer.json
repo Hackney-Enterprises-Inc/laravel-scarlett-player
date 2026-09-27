@@ -1,0 +1,77 @@
+{
+    "name": "hei/laravel-scarlett-player",
+    "description": "The server side of Scarlett Player for Laravel: analytics beacon ingest, clip generation, player configuration and the embed route",
+    "keywords": ["laravel", "scarlett-player", "video", "hls", "analytics", "beacons", "clips", "embed"],
+    "homepage": "https://github.com/Hackney-Enterprises-Inc/laravel-scarlett-player",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Hackney Enterprises Inc",
+            "email": "me@alexhackney.com"
+        }
+    ],
+    "support": {
+        "issues": "https://github.com/Hackney-Enterprises-Inc/laravel-scarlett-player/issues",
+        "source": "https://github.com/Hackney-Enterprises-Inc/laravel-scarlett-player"
+    },
+    "require": {
+        "php": "^8.3|^8.4|^8.5",
+        "illuminate/auth": "^12.0|^13.0",
+        "illuminate/bus": "^12.0|^13.0",
+        "illuminate/cache": "^12.0|^13.0",
+        "illuminate/console": "^12.0|^13.0",
+        "illuminate/contracts": "^12.0|^13.0",
+        "illuminate/database": "^12.0|^13.0",
+        "illuminate/events": "^12.0|^13.0",
+        "illuminate/filesystem": "^12.0|^13.0",
+        "illuminate/http": "^12.0|^13.0",
+        "illuminate/process": "^12.0|^13.0",
+        "illuminate/queue": "^12.0|^13.0",
+        "illuminate/routing": "^12.0|^13.0",
+        "illuminate/support": "^12.0|^13.0",
+        "illuminate/validation": "^12.0|^13.0",
+        "illuminate/view": "^12.0|^13.0"
+    },
+    "require-dev": {
+        "larastan/larastan": "^3.11",
+        "laravel/pint": "^1.0",
+        "laravel/sanctum": "^4.0",
+        "orchestra/testbench": "^10.0|^11.0",
+        "pestphp/pest": "^4.0",
+        "pestphp/pest-plugin-browser": "^4.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Hei\\ScarlettPlayer\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Hei\\ScarlettPlayer\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "analyse": "phpstan analyse --memory-limit=1G",
+        "format": "pint",
+        "lint": "pint --test",
+        "test": "pest"
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Hei\\ScarlettPlayer\\ScarlettPlayerServiceProvider"
+            ],
+            "aliases": {
+                "ScarlettPlayer": "Hei\\ScarlettPlayer\\Facades\\ScarlettPlayer"
+            }
+        }
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

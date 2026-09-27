@@ -1,0 +1,15 @@
+# The package booted in a bare testbench application.
+#
+#   composer install
+#   vendor/bin/testbench serve --host=127.0.0.1 --port=8002
+#
+# Used by the browser group as the ingest origin. Everything it needs comes from the
+# environment; nothing under here ships to a consumer.
+providers:
+  - Hei\ScarlettPlayer\ScarlettPlayerServiceProvider
+
+env:
+  - APP_NAME="Scarlett Player testbench"
+  - APP_ENV=local
+  - APP_DEBUG=true
+  - LOG_LEVEL=debug
