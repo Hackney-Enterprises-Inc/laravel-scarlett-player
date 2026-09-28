@@ -33,7 +33,7 @@ concurrency:
 jobs:
   resolve:
     name: resolve the version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       tag: ${{ steps.resolve.outputs.tag }}
       version: ${{ steps.resolve.outputs.version }}
@@ -114,7 +114,7 @@ jobs:
     name: verify the release commit
     needs: resolve
     if: needs.resolve.outputs.needed != 'no'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
         with:
@@ -165,7 +165,7 @@ jobs:
     name: tag the release commit
     needs: [resolve, verify]
     if: needs.resolve.outputs.needed == 'tag'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
@@ -197,7 +197,7 @@ jobs:
       && needs.resolve.outputs.needed != 'no'
       && needs.verify.result == 'success'
       && (needs.tag.result == 'success' || needs.tag.result == 'skipped')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:

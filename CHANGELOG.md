@@ -4,6 +4,12 @@ All notable changes to `hei/laravel-scarlett-player` are documented here. The fo
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- CI runs on the pinned `ubuntu-24.04` runner image instead of `ubuntu-latest`, which GitHub is migrating to Ubuntu 26 from 2026-10-19.
+
 ## [0.1.0] - 2026-09-27
 
 ### Added
