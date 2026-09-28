@@ -24,7 +24,8 @@ it('creates the three beacon tables', function (): void {
             'last_event_at', 'exit_type', 'startup_ms', 'watch_ms', 'play_ms', 'rebuffer_ms',
             'rebuffer_count', 'seek_count', 'pause_count', 'quality_changes', 'error_count',
             'max_bitrate', 'qoe_score', 'avg_bitrate', 'rebuffer_ratio', 'completion_rate',
-            'current_position', 'metrics_at', 'custom', 'custom_at', 'created_at', 'updated_at',
+            'current_position', 'metrics_at', 'custom', 'custom_stamps', 'custom_at', 'server', 'server_stamps',
+            'created_at', 'updated_at',
         ]))->toBeTrue()
         ->and(Schema::hasColumns('scarlett_beacon_events', ['view_id', 'event', 'event_key', 'occurred_at', 'payload', 'received_at']))->toBeTrue()
         ->and(Schema::hasColumns('scarlett_view_errors', ['view_id', 'video_id', 'event_key', 'type', 'message', 'code', 'fatal', 'occurred_at', 'received_at']))->toBeTrue();

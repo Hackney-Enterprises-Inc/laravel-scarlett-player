@@ -216,6 +216,23 @@ it('beacons from the embed page when the ingest and its key are configured', fun
         ->assertSee('data-analytics-api-key="'.TestCase::BEACON_KEY.'"', false);
 });
 
+it('renders the embed page with a configured heartbeat interval, which embed mode leaves out', function (): void {
+    config()->set('scarlett-player.player.heartbeat_interval', 5);
+
+    $response = $this->get('/v/video-1')->assertOk()->assertSee('data-analytics-video-id="video-1"', false);
+
+    // The page builds through withAnalytics() in embed mode, where the bundle has no
+    // attribute for the interval: nothing is emitted and the player default applies.
+    expect($response->getContent())->not->toContain('heartbeat');
+});
+
+it('keeps clips off the embed page, which has no session or csrf meta tag of the host', function (): void {
+    $content = (string) $this->get('/v/video-1')->assertOk()->getContent();
+
+    expect($content)->not->toContain('data-clips-')
+        ->and($content)->not->toContain('embed.addon.');
+});
+
 it('leaves analytics off the embed page without a key, or with beacons off', function (string $key, mixed $value): void {
     config()->set("scarlett-player.{$key}", $value);
 

@@ -33,6 +33,12 @@ class PlayerConfigBuilder implements Arrayable, JsonSerializable
     /** The host config schema version toArray() emits. */
     public const SCHEMA_VERSION = 1;
 
+    /**
+     * The longest heartbeat interval, in milliseconds: the largest delay browsers honour
+     * in setInterval() (a signed 32-bit int). Anything longer fires almost immediately.
+     */
+    public const MAX_HEARTBEAT_MS = 2147483647;
+
     /** The player CDN layout: versioned directories, the ES module build. */
     public const DEFAULT_EMBED_BUNDLE = '{cdn_url}/v{player_version}/embed.js';
 
@@ -58,6 +64,9 @@ class PlayerConfigBuilder implements Arrayable, JsonSerializable
 
     /** @var array<string, mixed>|null */
     protected ?array $analytics = null;
+
+    /** Seconds, set by heartbeatInterval(); null reads player.heartbeat_interval. */
+    protected ?float $heartbeatInterval = null;
 
     /** @var array<string, mixed>|null */
     protected ?array $clips = null;
@@ -102,7 +111,7 @@ class PlayerConfigBuilder implements Arrayable, JsonSerializable
     {
         $this->mode = $this->validMode($mode);
 
-        foreach (['clips' => $this->clips, 'chapters' => $this->chapters, 'captions' => $this->captions] as $feature => $value) {
+        foreach (['clips' => $this->clips, 'chapters' => $this->chapters, 'captions' => $this->captions, 'analytics_heartbeat' => $this->heartbeatInterval] as $feature => $value) {
             if ($value !== null) {
                 $this->assertSupported($feature);
             }
@@ -218,10 +227,57 @@ class PlayerConfigBuilder implements Arrayable, JsonSerializable
     }
 
     /**
+     * Seconds between the analytics plugin's heartbeats for this player, overriding
+     * player.heartbeat_interval; null goes back to the config value. Emitted in the
+     * analytics block, in milliseconds, whenever analytics is on, in either call order.
+     *
+     * @throws UnsupportedInEmbedMode in embed mode: the embed bundle has no attribute for it.
+     * @throws InvalidPlayerConfigException for a value that is not above zero.
+     */
+    public function heartbeatInterval(int|float|null $seconds): static
+    {
+        if ($seconds !== null) {
+            $this->assertSupported('analytics_heartbeat');
+        }
+
+        $this->heartbeatInterval = self::heartbeatSeconds($seconds);
+
+        return $this;
+    }
+
+    /**
+     * A heartbeat interval in seconds from config, an attribute or the setter: a number,
+     * or a numeric string (an env value). Null and '' mean the player default.
+     *
+     * @throws InvalidPlayerConfigException for anything that is not a number above zero.
+     */
+    public static function heartbeatSeconds(mixed $value): ?float
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        $seconds = is_int($value) || is_float($value) || (is_string($value) && is_numeric($value))
+            ? (float) $value
+            : null;
+
+        $milliseconds = $seconds === null ? NAN : round($seconds * 1000);
+
+        // Under a millisecond rounds to 0, which the player reads as its default. Above
+        // the browser timer limit, setInterval() fires almost at once (a heartbeat flood);
+        // that bound also keeps the int cast in analyticsConfig() in range.
+        if (! is_finite($milliseconds) || $milliseconds < 1 || $milliseconds > self::MAX_HEARTBEAT_MS) {
+            throw InvalidPlayerConfigException::heartbeatInterval($value);
+        }
+
+        return $seconds;
+    }
+
+    /**
      * Wire the clips plugin to this package's clip route. csrf true tells the
      * initialiser to attach X-CSRF-TOKEN from the page's meta tag on every request.
      *
-     * @throws UnsupportedInEmbedMode in embed mode.
+     * @throws UnsupportedInEmbedMode in embed mode on a player whose embed bundle cannot carry it (FeatureMatrix).
      * @throws ClipPolicyMissingException for protected media with no Clip policy.
      * @throws InvalidPlayerConfigException when the clips route is not registered.
      */
@@ -260,7 +316,7 @@ class PlayerConfigBuilder implements Arrayable, JsonSerializable
      *
      * @param  iterable<array-key, mixed>|string  $chapters
      *
-     * @throws UnsupportedInEmbedMode in embed mode.
+     * @throws UnsupportedInEmbedMode in embed mode on a player whose embed bundle cannot carry it (FeatureMatrix).
      * @throws InvalidPlayerConfigException for a malformed chapter.
      */
     public function withChapters(iterable|string $chapters): static
@@ -306,7 +362,7 @@ class PlayerConfigBuilder implements Arrayable, JsonSerializable
      *
      * @param  iterable<array-key, mixed>  $tracks
      *
-     * @throws UnsupportedInEmbedMode in embed mode.
+     * @throws UnsupportedInEmbedMode in embed mode on a player whose embed bundle cannot carry it (FeatureMatrix).
      * @throws InvalidPlayerConfigException for a malformed track.
      */
     public function withCaptions(iterable $tracks): static
@@ -396,7 +452,7 @@ class PlayerConfigBuilder implements Arrayable, JsonSerializable
                 'color' => $this->brandColor,
                 'textColor' => $this->brandTextColor,
             ],
-            'analytics' => $this->analytics,
+            'analytics' => $this->analyticsConfig(),
             'clips' => $this->clips,
             'chapters' => $this->chapters,
             'captions' => $this->captions,
@@ -449,8 +505,24 @@ class PlayerConfigBuilder implements Arrayable, JsonSerializable
             'data-analytics-beacon-url' => $this->analytics['beaconUrl'] ?? null,
             'data-analytics-video-id' => $this->analytics['videoId'] ?? null,
             'data-analytics-api-key' => $this->analytics['apiKey'] ?? null,
-            // No isLive attribute: the embed README documents none (FeatureMatrix
-            // 'analytics_live'). Add it here when the player ships one.
+            // No isLive or heartbeat interval attribute: the embed README documents
+            // neither (FeatureMatrix 'analytics_live', 'analytics_heartbeat'). Add them
+            // here when the player ships them.
+            'data-captions' => $this->captions === null ? null : $this->json($this->captions['sources']),
+            // A JSON list (the parser reads a value starting with '[' as JSON), or the
+            // WebVTT URL the host gave.
+            'data-chapters' => match (true) {
+                $this->chapters === null => null,
+                isset($this->chapters['src']) => $this->chapters['src'],
+                default => $this->json($this->chapters['chapters'] ?? []),
+            },
+            // Inert without data-clips-csrf="meta"; the media id is emitted because the
+            // player's fallback is data-src, the playback URL.
+            'data-clips-endpoint' => $this->clips['endpoint']['url'] ?? null,
+            'data-clips-csrf' => $this->clips === null ? null : 'meta',
+            'data-clips-media-id' => $this->clips['mediaId'] ?? null,
+            'data-clips-min-duration' => is_int($this->clips['minDuration'] ?? null) || is_float($this->clips['minDuration'] ?? null) ? $this->formatNumber((float) $this->clips['minDuration']) : null,
+            'data-clips-max-duration' => is_int($this->clips['maxDuration'] ?? null) || is_float($this->clips['maxDuration'] ?? null) ? $this->formatNumber((float) $this->clips['maxDuration']) : null,
         ];
 
         return array_map(
@@ -493,6 +565,36 @@ class PlayerConfigBuilder implements Arrayable, JsonSerializable
     }
 
     /**
+     * The embed addon files this config needs, in the order they load after the bundle:
+     * chapters, then clips. Each sits beside the bundle, in the same version directory,
+     * in the same build flavour (embed.addon.<name>.js beside an ES module bundle,
+     * embed.addon.<name>.umd.cjs beside the UMD build), because an addon refuses an
+     * embed of another version. Empty in module mode.
+     *
+     * @return list<string>
+     *
+     * @throws InvalidPlayerConfigException when the bundle URL cannot be built.
+     */
+    public function embedAddonUrls(): array
+    {
+        if ($this->mode !== FeatureMatrix::EMBED) {
+            return [];
+        }
+
+        $names = array_keys(array_filter(['chapters' => $this->chapters, 'clips' => $this->clips], fn (?array $feature): bool => $feature !== null));
+
+        if ($names === []) {
+            return [];
+        }
+
+        $bundle = (string) strtok($this->embedBundleUrl(), '?#');
+        $directory = substr($bundle, 0, (int) strrpos($bundle, '/') + 1);
+        $extension = $this->embedBundleIsModule() ? '.js' : '.umd.cjs';
+
+        return array_map(fn (string $name): string => "{$directory}embed.addon.{$name}{$extension}", $names);
+    }
+
+    /**
      * Whether the embed bundle loads as an ES module: every bundle but the UMD build
      * (a path ending in .cjs), which is a classic script.
      *
@@ -511,13 +613,61 @@ class PlayerConfigBuilder implements Arrayable, JsonSerializable
     }
 
     /**
+     * The analytics block with the heartbeat interval resolved now, so the setter and
+     * withAnalytics() work in either order. Embed mode leaves a configured interval out:
+     * the page still renders and the player default applies.
+     *
+     * @return array<string, mixed>|null
+     *
+     * @throws InvalidPlayerConfigException for a malformed player.heartbeat_interval.
+     */
+    protected function analyticsConfig(): ?array
+    {
+        if ($this->analytics === null || ! FeatureMatrix::supports('analytics_heartbeat', $this->mode, $this->playerVersion())) {
+            return $this->analytics;
+        }
+
+        $seconds = $this->heartbeatInterval
+            ?? self::heartbeatSeconds($this->config->get('scarlett-player.player.heartbeat_interval'));
+
+        if ($seconds === null) {
+            return $this->analytics;
+        }
+
+        return [...$this->analytics, 'heartbeatInterval' => (int) round($seconds * 1000)];
+    }
+
+    /**
      * @throws UnsupportedInEmbedMode when the current mode cannot carry the feature.
      */
     protected function assertSupported(string $feature): void
     {
-        if ($this->mode === FeatureMatrix::EMBED && ! FeatureMatrix::supports($feature, $this->mode, $this->playerVersion())) {
+        if ($this->mode !== FeatureMatrix::EMBED) {
+            return;
+        }
+
+        if (! FeatureMatrix::supports($feature, $this->mode, $this->playerVersion())) {
             throw new UnsupportedInEmbedMode($feature, $this->playerVersion());
         }
+
+        $build = $this->embedBundleFile();
+
+        if (in_array($feature, FeatureMatrix::VIDEO_BUILD_ONLY, true) && str_starts_with(strtolower($build), 'embed.audio')) {
+            throw new UnsupportedInEmbedMode($feature, $this->playerVersion(), $build);
+        }
+    }
+
+    /**
+     * The embed bundle's file name, from the player.embed_bundle template (no CDN URL
+     * needed), e.g. embed.js, embed.video.umd.cjs, embed.audio.js.
+     */
+    protected function embedBundleFile(): string
+    {
+        $template = $this->config->get('scarlett-player.player.embed_bundle');
+        $template = is_string($template) && $template !== '' ? $template : self::DEFAULT_EMBED_BUNDLE;
+        $path = (string) strtok($template, '?#');
+
+        return substr($path, (int) strrpos($path, '/') + (str_contains($path, '/') ? 1 : 0));
     }
 
     /**
@@ -557,6 +707,14 @@ class PlayerConfigBuilder implements Arrayable, JsonSerializable
         $value = $this->config->get($key);
 
         return is_int($value) || is_float($value) ? $value : null;
+    }
+
+    /**
+     * @param  array<array-key, mixed>  $value
+     */
+    protected function json(array $value): string
+    {
+        return json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR);
     }
 
     protected function formatNumber(float $value): string

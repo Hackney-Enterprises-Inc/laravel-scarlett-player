@@ -148,6 +148,15 @@ return [
         'store_raw_events' => true,
 
         /**
+         * Event names never written to scarlett_beacon_events, even while
+         * store_raw_events is on. The view row still merges every beacon, so
+         * ['heartbeat'] keeps the aggregate exact and cuts the table to about a tenth,
+         * losing only the per-heartbeat trail. Errors listed here still reach
+         * scarlett_view_errors.
+         */
+        'raw_events_except' => [],
+
+        /**
          * Store the client IP address at all.
          */
         'store_ip' => false,
@@ -183,6 +192,15 @@ return [
          * Each may redact the beacon or return null to drop it before storage.
          */
         'pipeline' => [],
+
+        /**
+         * A class implementing Hei\ScarlettPlayer\Contracts\ResolvesBeaconContext, resolved
+         * from the container for every beacon before it is queued. It adds fields the
+         * browser cannot be trusted with (the user id, the tenant); its keys always beat
+         * a custom dimension of the same name. Null attaches nothing. Writes to the
+         * scarlett_views.server and server_stamps columns.
+         */
+        'context' => null,
     ],
 
     /*
@@ -357,6 +375,16 @@ return [
          * .cjs (the UMD build) is loaded as a classic script, anything else as a module.
          */
         'embed_bundle' => env('SCARLETT_EMBED_BUNDLE', '{cdn_url}/v{player_version}/embed.js'),
+
+        /**
+         * Seconds between the analytics plugin's heartbeats, passed to the player as
+         * heartbeatInterval. Null leaves the player's default (10 s). Each player sends
+         * 60 / interval heartbeats a minute against the scarlett-beacons limit
+         * (beacons.throttle, 600 a minute per IP by default), so a short interval on a
+         * page with several players needs a higher limit. Module mode only on player
+         * 1.17.0: the embed bundle has no attribute for it.
+         */
+        'heartbeat_interval' => env('SCARLETT_HEARTBEAT_INTERVAL'),
     ],
 
     /*

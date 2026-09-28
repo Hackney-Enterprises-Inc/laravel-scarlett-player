@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Hei\ScarlettPlayer\Data;
 
+use Hei\ScarlettPlayer\Exceptions\InvalidBeaconContextException;
+
 /**
  * One analytics beacon, as the player's analytics plugin sends it.
  *
@@ -17,9 +19,20 @@ namespace Hei\ScarlettPlayer\Data;
  *
  * A key present with a null value is treated as absent, known or custom, so it
  * never touches what is stored (the fill-if-absent rule).
+ *
+ * $server is what the host asserted about the beacon (beacons.context, or a pipeline
+ * step through withServer()), never what the browser sent. A key in $server is never
+ * also in $custom.
  */
 final readonly class BeaconPayload
 {
+    /**
+     * sha1 of the beacon as received, before any with*() change: what the event key
+     * hashes, so neither a redaction nor the server context moves it. Equal to v0.1.0's
+     * hash of an unredacted beacon.
+     */
+    public string $bodyHash;
+
     /** Keys every beacon carries. The four ids are required. */
     public const IDENTITY = ['event', 'timestamp', 'viewId', 'sessionId', 'viewerId', 'videoId'];
 
@@ -94,6 +107,9 @@ final readonly class BeaconPayload
      * @param  array<string, int|float|string|bool>  $fields  known event keys present and non-null
      * @param  array<string, mixed>  $custom  every key the package does not know
      * @param  string|null  $ip  the client address, only when beacons.store_ip is on
+     * @param  array<string, mixed>  $server  server-owned keys, non-null values only
+     * @param  list<string>  $owned  every key the server context owns, null-valued ones included
+     * @param  string|null  $bodyHash  carried by the with*() methods; null hashes this beacon
      */
     public function __construct(
         public string $event,
@@ -106,7 +122,12 @@ final readonly class BeaconPayload
         public array $fields = [],
         public array $custom = [],
         public ?string $ip = null,
-    ) {}
+        public array $server = [],
+        public array $owned = [],
+        ?string $bodyHash = null,
+    ) {
+        $this->bodyHash = $bodyHash ?? sha1((string) json_encode($this->browserArray(), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+    }
 
     /**
      * Build from a decoded beacon body that has passed validation.
@@ -180,7 +201,8 @@ final readonly class BeaconPayload
 
     /**
      * The same beacon with its custom dimensions replaced, for a ProcessesBeacon
-     * that redacts before storage.
+     * that redacts before storage. A key the server context owns is left out, one it
+     * owns as null included.
      *
      * @param  array<string, mixed>  $custom
      */
@@ -188,7 +210,55 @@ final readonly class BeaconPayload
     {
         return new self(
             $this->event, $this->timestamp, $this->viewId, $this->sessionId, $this->viewerId,
-            $this->videoId, $this->context, $this->fields, $custom, $this->ip,
+            $this->videoId, $this->context, $this->fields, array_diff_key($custom, array_flip($this->owned)),
+            $this->ip, $this->server, $this->owned, $this->bodyHash,
+        );
+    }
+
+    /**
+     * The same beacon with its server context replaced: the fields the host asserts
+     * (beacons.context, or a ProcessesBeacon step). Every key given is server-owned
+     * on this beacon and removed from the custom dimensions, so a browser cannot
+     * spoof it; a non-null value is kept in $server, a null one only strips.
+     *
+     * A key that is also a known context or event name (`duration`, `isLive`) is
+     * allowed, but it goes only to the server map and the raw log, never to that
+     * key's own column, which keeps the browser's value.
+     *
+     * @param  array<array-key, mixed>  $server
+     *
+     * @throws InvalidBeaconContextException for one of the six identity keys or an empty key
+     */
+    public function withServer(array $server): self
+    {
+        $custom = $this->custom;
+        $kept = [];
+        $owned = [];
+
+        foreach ($server as $key => $value) {
+            // PHP makes a numeric-string key an int; it is still the name "5".
+            $key = (string) $key;
+
+            if ($key === '') {
+                throw InvalidBeaconContextException::invalidKey($key);
+            }
+
+            if (in_array($key, self::IDENTITY, true)) {
+                throw InvalidBeaconContextException::reservedKey($key);
+            }
+
+            unset($custom[$key]);
+            $owned[] = $key;
+
+            if ($value !== null) {
+                $kept[$key] = $value;
+            }
+        }
+
+        return new self(
+            $this->event, $this->timestamp, $this->viewId, $this->sessionId, $this->viewerId,
+            $this->videoId, $this->context, $this->fields, $custom, $this->ip, $kept, $owned,
+            $this->bodyHash,
         );
     }
 
@@ -199,18 +269,32 @@ final readonly class BeaconPayload
     {
         return new self(
             $this->event, $this->timestamp, $this->viewId, $this->sessionId, $this->viewerId,
-            $this->videoId, $this->context, $this->fields, $this->custom, $ip,
+            $this->videoId, $this->context, $this->fields, $this->custom, $ip, $this->server,
+            $this->owned, $this->bodyHash,
         );
     }
 
     /**
-     * The beacon as stored: identity, the known keys present, then custom dimensions.
-     * What the raw event log and the fake's ledger record, after any pipeline step,
-     * so a redaction reaches the raw log too. Known keys sent as null are left out.
+     * The beacon as stored: the browser's keys, then the server context last, so a
+     * server-owned value wins a name the browser also used. What the raw event log
+     * and the fake's ledger record, after any pipeline step, so a redaction reaches
+     * the raw log too. Known keys sent as null are left out.
      *
      * @return array<string, mixed>
      */
     public function toArray(): array
+    {
+        return array_replace($this->browserArray(), $this->server);
+    }
+
+    /**
+     * The beacon as the browser sent it, after any redaction: identity, the known keys
+     * present, then custom dimensions, without the server context. $bodyHash is the
+     * hash of this as received.
+     *
+     * @return array<string, mixed>
+     */
+    public function browserArray(): array
     {
         // array_replace, not `...`: spreading renumbers integer keys, so a custom
         // dimension named "5" (PHP makes numeric-string keys ints) would become 0.
@@ -222,6 +306,42 @@ final readonly class BeaconPayload
             'viewerId' => $this->viewerId,
             'videoId' => $this->videoId,
         ], $this->context, $this->fields, $this->custom);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function __serialize(): array
+    {
+        return get_object_vars($this);
+    }
+
+    /**
+     * Restores a queued beacon. A job queued by an older version of the package lacks
+     * the newer properties; they get the values a fresh beacon would have, so jobs in
+     * the queue across an upgrade still process.
+     *
+     * @param  array<string, mixed>  $data
+     */
+    public function __unserialize(array $data): void
+    {
+        $server = (array) ($data['server'] ?? []);
+
+        $this->__construct(
+            event: (string) $data['event'],
+            timestamp: (int) $data['timestamp'],
+            viewId: (string) $data['viewId'],
+            sessionId: (string) $data['sessionId'],
+            viewerId: (string) $data['viewerId'],
+            videoId: (string) $data['videoId'],
+            context: (array) ($data['context'] ?? []),
+            fields: (array) ($data['fields'] ?? []),
+            custom: (array) ($data['custom'] ?? []),
+            ip: isset($data['ip']) ? (string) $data['ip'] : null,
+            server: $server,
+            owned: array_values(array_map('strval', (array) ($data['owned'] ?? array_keys($server)))),
+            bodyHash: isset($data['bodyHash']) ? (string) $data['bodyHash'] : null,
+        );
     }
 
     /**

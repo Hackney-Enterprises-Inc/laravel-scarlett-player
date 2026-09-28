@@ -17,6 +17,7 @@ use Hei\ScarlettPlayer\Data\BeaconPayload;
 use Hei\ScarlettPlayer\Data\MediaSource;
 use Hei\ScarlettPlayer\Doctor\Check;
 use Hei\ScarlettPlayer\Doctor\CheckRegistry;
+use Hei\ScarlettPlayer\Doctor\Checks\BeaconContextCheck;
 use Hei\ScarlettPlayer\Doctor\Checks\BeaconIpColumnCheck;
 use Hei\ScarlettPlayer\Doctor\Checks\BeaconKeyCheck;
 use Hei\ScarlettPlayer\Doctor\Checks\BeaconQueueCheck;
@@ -226,6 +227,7 @@ class ScarlettPlayerServiceProvider extends ServiceProvider
             CorsCheck::class,
             BeaconQueueCheck::class,
             BeaconIpColumnCheck::class,
+            BeaconContextCheck::class,
         ];
     }
 

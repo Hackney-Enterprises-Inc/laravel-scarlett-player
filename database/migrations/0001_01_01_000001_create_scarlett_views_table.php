@@ -23,6 +23,11 @@ use Illuminate\Support\Facades\Schema;
  *   custom               custom dimensions, merged key by key, each key's newest
  *                        writer winning by its stamp in custom_stamps (epoch ms per
  *                        key); custom_at is the newest stamp
+ *   server               what the host's beacons.context resolver asserted (a user
+ *                        id, a tenant), kept apart from custom, which is what the
+ *                        browser sent; merged key by key like custom, stamps in
+ *                        server_stamps. Only beacons that carry server keys read or
+ *                        write these two columns
  *
  * *_at columns other than created_at and updated_at are the player's clock (epoch
  * milliseconds, stored as UTC). There is no IP column unless
@@ -98,6 +103,8 @@ return new class extends Migration
             $table->json('custom')->nullable();
             $table->json('custom_stamps')->nullable();
             $table->dateTime('custom_at', 3)->nullable();
+            $table->json('server')->nullable();
+            $table->json('server_stamps')->nullable();
 
             $table->timestamps();
 

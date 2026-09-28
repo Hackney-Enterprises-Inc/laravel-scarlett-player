@@ -64,7 +64,9 @@ use Throwable;
  * the same order. The monotonic, true-wins, latest-by-timestamp and custom classes
  * are order-independent. Custom dimensions merge key by key with a stamp per key
  * (custom_stamps), read under a row lock and written back in statement 3; custom_at
- * is only the newest of those stamps. Ties: two beacons in the same millisecond
+ * is only the newest of those stamps. The server context (server, server_stamps)
+ * merges the same way in the same locked read, and only for a beacon that carries
+ * one: a host without beacons.context never reads or writes those columns. Ties: two beacons in the same millisecond
  * tie-break on their event key for custom keys, while the per-column latest group
  * (qoe_score and siblings) resolves an exact tie by processing order. The set-once class is not, by the plan's definition: the first
  * beacon to arrive with a value keeps it, so of two viewEnds delivered out of order
@@ -183,13 +185,13 @@ class EloquentBeaconStore implements BeaconStore
 
     /**
      * The event_key that makes a raw event or an error row unique:
-     * sha1(viewId . event . timestamp . sha1(payload)).
+     * sha1(viewId . event . timestamp . sha1(payload)), the payload being the beacon as
+     * received (BeaconPayload::$bodyHash), so neither a pipeline redaction nor the
+     * server context moves the key of a redelivered beacon.
      */
     public static function eventKey(BeaconPayload $payload): string
     {
-        $body = (string) json_encode($payload->toArray(), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-
-        return sha1($payload->viewId.$payload->event.$payload->timestamp.sha1($body));
+        return sha1($payload->viewId.$payload->event.$payload->timestamp.$payload->bodyHash);
     }
 
     /**
@@ -214,7 +216,7 @@ class EloquentBeaconStore implements BeaconStore
         $exists = $connection->getDriverName() !== 'sqlite'
             && $connection->table(self::VIEWS)->where('view_id', $payload->viewId)->lockForUpdate()->first(['id']) !== null;
 
-        if ($this->config->get('scarlett-player.beacons.store_raw_events')) {
+        if ($this->config->get('scarlett-player.beacons.store_raw_events') && ! $this->rawEventExcluded($payload->event)) {
             $connection->table(self::EVENTS)->insertOrIgnore([
                 'view_id' => $payload->viewId,
                 'event' => $payload->event,
@@ -307,6 +309,13 @@ class EloquentBeaconStore implements BeaconStore
             $row['custom_at'] = $at;
         }
 
+        // Only when the beacon carries server keys: a host without beacons.context never
+        // touches the columns, so a table migrated by 0.1.0, which lacks them, still works.
+        if ($payload->server !== []) {
+            $row['server'] = $this->json($payload->server);
+            $row['server_stamps'] = $this->json(array_fill_keys(array_keys($payload->server), self::customStamp($payload)));
+        }
+
         return $row;
     }
 
@@ -348,11 +357,10 @@ class EloquentBeaconStore implements BeaconStore
             array_push($bindings, $at, $value);
         }
 
-        if ($payload->custom !== []) {
-            [$custom, $stamps] = $this->mergeCustom($connection, $payload);
-            $sets[] = $grammar->wrap('custom').' = ?';
-            $sets[] = $grammar->wrap('custom_stamps').' = ?';
-            array_push($bindings, $this->json($custom), $this->json($stamps));
+        foreach ($this->mergeMaps($connection, $payload) as $column => [$values, $stamps]) {
+            $sets[] = $grammar->wrap($column).' = ?';
+            $sets[] = $grammar->wrap($column.'_stamps').' = ?';
+            array_push($bindings, $this->json($values), $this->json($stamps));
         }
 
         // Timestamps last: see the class docblock on MySQL's assignment order.
@@ -388,41 +396,65 @@ class EloquentBeaconStore implements BeaconStore
     }
 
     /**
-     * Custom dimensions merged key by key, the last writer by timestamp winning each
-     * key: an incoming key is written only when this beacon is at least as new as the
-     * beacon that last wrote that key (custom_stamps, customStamp() per key). The row is
-     * read with a lock inside the beacon's transaction, so two workers merging into
-     * one view serialise here; the result goes back in statement 3. Done in PHP
-     * rather than SQL because no JSON function does a per-key conditional merge on
-     * all three engines, and PHP replaces a value whole, the same on every engine.
+     * The JSON maps this beacon writes (custom, the browser's; server, the host's),
+     * each merged key by key, the last writer by timestamp winning each key: an
+     * incoming key is written only when this beacon is at least as new as the beacon
+     * that last wrote that key ({map}_stamps, customStamp() per key). The row is read
+     * with a lock inside the beacon's transaction, both maps in one SELECT, so two
+     * workers merging into one view serialise here; the result goes back in
+     * statement 3. Done in PHP rather than SQL because no JSON function does a
+     * per-key conditional merge on all three engines, and PHP replaces a value
+     * whole, the same on every engine.
      *
-     * @return array{0: array<array-key, mixed>, 1: array<array-key, string>}
+     * A map the beacon does not carry is neither read nor written, so the server
+     * columns are touched only by a beacon with server context.
+     *
+     * @return array<string, array{0: array<array-key, mixed>, 1: array<array-key, string>}>
      */
-    private function mergeCustom(Connection $connection, BeaconPayload $payload): array
+    private function mergeMaps(Connection $connection, BeaconPayload $payload): array
     {
+        $incoming = array_filter(['custom' => $payload->custom, 'server' => $payload->server]);
+
+        if ($incoming === []) {
+            return [];
+        }
+
+        $columns = [];
+
+        foreach (array_keys($incoming) as $column) {
+            array_push($columns, $column, $column.'_stamps');
+        }
+
         $row = $connection->table(self::VIEWS)
             ->where('view_id', $payload->viewId)
             ->lockForUpdate()
-            ->first(['custom', 'custom_stamps']);
+            ->first($columns);
 
-        $custom = $this->decode($row->custom ?? null);
-        $stamps = array_map('strval', $this->decode($row->custom_stamps ?? null));
-        $incoming = self::customStamp($payload);
+        $stamp = self::customStamp($payload);
+        $merged = [];
 
-        foreach ($payload->custom as $key => $value) {
-            if (! isset($stamps[$key]) || strcmp($incoming, $stamps[$key]) >= 0) {
-                $custom[$key] = $value;
-                $stamps[$key] = $incoming;
+        foreach ($incoming as $column => $map) {
+            $values = $this->decode($row->{$column} ?? null);
+            $stamps = array_map('strval', $this->decode($row->{$column.'_stamps'} ?? null));
+
+            foreach ($map as $key => $value) {
+                if (! isset($stamps[$key]) || strcmp($stamp, $stamps[$key]) >= 0) {
+                    $values[$key] = $value;
+                    $stamps[$key] = $stamp;
+                }
             }
+
+            $merged[$column] = [$values, $stamps];
         }
 
-        return [$custom, $stamps];
+        return $merged;
     }
 
     /**
-     * A custom key's stamp: the beacon's timestamp, zero-padded, then its event key, so
-     * string order is timestamp order and two different beacons in the same millisecond
-     * tie-break on the event key (the larger wins) instead of on processing order.
+     * A map key's stamp, for custom and server alike: the beacon's timestamp,
+     * zero-padded, then its event key, so string order is timestamp order and two
+     * different beacons in the same millisecond tie-break on the event key (the larger
+     * wins) instead of on processing order.
      */
     public static function customStamp(BeaconPayload $payload): string
     {
@@ -619,6 +651,17 @@ class EloquentBeaconStore implements BeaconStore
         }
 
         return $this->ipColumn ??= $connection->getSchemaBuilder()->hasColumn(self::VIEWS, 'ip_address');
+    }
+
+    /**
+     * The event is named in beacons.raw_events_except. Only string entries count; a
+     * non-list setting or any other entry is ignored rather than failing the beacon.
+     */
+    private function rawEventExcluded(string $event): bool
+    {
+        $except = $this->config->get('scarlett-player.beacons.raw_events_except', []);
+
+        return is_array($except) && in_array($event, array_filter($except, 'is_string'), true);
     }
 
     private function connection(): Connection

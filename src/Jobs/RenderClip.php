@@ -14,6 +14,7 @@ use Hei\ScarlettPlayer\Enums\ClipVisibility;
 use Hei\ScarlettPlayer\Events\ClipProcessing;
 use Hei\ScarlettPlayer\Events\ClipReady;
 use Hei\ScarlettPlayer\Exceptions\ClipGenerationException;
+use Hei\ScarlettPlayer\Exceptions\ClipStorageException;
 use Hei\ScarlettPlayer\Exceptions\MediaNotFoundException;
 use Hei\ScarlettPlayer\Generators\ClipGeneratorManager;
 use Hei\ScarlettPlayer\Models\Clip;
@@ -401,7 +402,12 @@ class RenderClip implements ShouldBeUniqueUntilProcessing, ShouldQueue
             return false;
         }
 
-        $storage->setVisibility($path, 'private');
+        // A refused write (false on a throw => false disk) goes to renderError() like any
+        // other storage failure: never mark ready an object that may still be public.
+        if ($storage->setVisibility($path, 'private') === false) {
+            throw ClipStorageException::visibilityNotSet((string) $clip->uuid, $disk, $path, 'private');
+        }
+
         $this->ready($clip, $disk, $path, $storage->size($path), rendered: false);
 
         return true;
@@ -465,10 +471,25 @@ class RenderClip implements ShouldBeUniqueUntilProcessing, ShouldQueue
         // Approved before it rendered: under disk-public the object must now be public.
         // Under the moderation lock, and compensated, so a concurrent reject wins.
         if ($clip->visibility === ClipVisibility::Public && config('scarlett-player.clips.public_delivery') === 'disk-public') {
+            // A refused PUBLIC write leaves the object private (the safe side) under a
+            // ready, public row: report it and still announce the clip. A refused PRIVATE
+            // write is sync's compensation after a reject landed mid-write: the object is
+            // public under a hidden row, so no ClipReady; rethrown to the render-error
+            // path, which reports it. The row stays ready (renderError() only touches a
+            // processing row) and the reject stamped updated_at, so reconcile's visibility
+            // pass retries the private write until it lands.
             try {
-                $clip->withModerationLock(fn () => $clip->syncAssetVisibility());
-            } catch (LockTimeoutException) {
-                $clip->syncAssetVisibility();
+                try {
+                    $clip->withModerationLock(fn () => $clip->syncAssetVisibility());
+                } catch (LockTimeoutException) {
+                    $clip->syncAssetVisibility();
+                }
+            } catch (ClipStorageException $e) {
+                if ($e->leftObjectExposed()) {
+                    throw $e;
+                }
+
+                report($e);
             }
         }
 

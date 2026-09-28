@@ -3,6 +3,12 @@
 @once
 <script src="{{ $builder->embedBundleUrl() }}"@if ($builder->embedBundleIsModule()) type="module"@endif{!! $nonce ? ' nonce="'.e($nonce).'"' : '' !!}></script>
 @endonce
+{{-- Addons after the bundle, from the same version directory: an addon refuses an embed of another version. --}}
+@foreach ($builder->embedAddonUrls() as $addonUrl)
+@once('scarlett-addon:'.$addonUrl)
+<script src="{{ $addonUrl }}"@if ($builder->embedBundleIsModule()) type="module"@endif{!! $nonce ? ' nonce="'.e($nonce).'"' : '' !!}></script>
+@endonce
+@endforeach
 @else
 <div {{ $attributes->merge(['id' => $playerId]) }} data-scarlett-host="{{ $playerId }}-config"{{ $manual ? ' data-scarlett-manual' : '' }}></div>
 <script type="application/json" id="{{ $playerId }}-config" data-scarlett-config>{!! $configJson() !!}</script>
