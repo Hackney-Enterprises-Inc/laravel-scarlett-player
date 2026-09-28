@@ -8,7 +8,7 @@ use Hei\ScarlettPlayer\Tests\Fixtures\Provider\ArrayResolver;
 use Illuminate\View\ViewException;
 
 /** The published embed README, the only source of data-* attribute names (see its PROVENANCE.md). */
-const EMBED_README = __DIR__.'/../../Fixtures/embed/attributes/1.17.0/README.md';
+const EMBED_README = __DIR__.'/../../Fixtures/embed/attributes/1.19.1/README.md';
 
 beforeEach(function (): void {
     ScarlettPlayer::fake()->withMedia(ArrayResolver::source('video-1'));

@@ -1,0 +1,61 @@
+{
+  "fixture": {
+    "player": "1.19.1",
+    "capturedAt": "2026-09-28T19:01:30.445Z",
+    "harness": "scripts/capture-wire-fixtures.mjs",
+    "chromium": "151.0.7922.34",
+    "node": "v24.20.0",
+    "event": "error",
+    "transport": "fetch",
+    "variant": null,
+    "scenario": "error",
+    "receivedAt": "2026-09-28T19:02:02.329Z"
+  },
+  "request": {
+    "method": "POST",
+    "path": "/api/scarlett/beacons",
+    "query": {},
+    "headers": {
+      "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.7922.34 Safari/537.36",
+      "sec-ch-ua-platform": "\"macOS\"",
+      "x-wire-token": "per-beacon",
+      "sec-ch-ua": "\"Not=A?Brand\";v=\"99\", \"HeadlessChrome\";v=\"151\", \"Chromium\";v=\"151\"",
+      "content-type": "application/json",
+      "x-api-key": "wire-capture-key",
+      "sec-ch-ua-mobile": "?0",
+      "accept": "*/*",
+      "origin": "http://127.0.0.1:59395",
+      "sec-fetch-site": "cross-site",
+      "sec-fetch-mode": "cors",
+      "sec-fetch-dest": "empty",
+      "referer": "http://127.0.0.1:59395/",
+      "accept-encoding": "gzip, deflate, br, zstd"
+    },
+    "body": {
+      "event": "error",
+      "timestamp": 1790622122327,
+      "viewId": "1790622116056-myznqwrlt",
+      "sessionId": "1790622116056-8a9g9f0gu",
+      "viewerId": "1790622116056-0vt5qd7j1",
+      "videoId": "wire-fixture-vod",
+      "videoTitle": "Wire fixture (VOD)",
+      "isLive": null,
+      "playerVersion": "1.19.1",
+      "playerName": "scarlett-player",
+      "browser": "Chrome",
+      "os": "macOS",
+      "deviceType": "desktop",
+      "screenSize": "1280x720",
+      "playerSize": "640x360",
+      "connectionType": "4g",
+      "tenant": "wire",
+      "planTier": "free",
+      "experiment": 42,
+      "beta": true,
+      "errorType": "MEDIA_NETWORK_ERROR",
+      "errorMessage": "HLS error: manifestLoadError (max retries exceeded)",
+      "errorCode": "MEDIA_NETWORK_ERROR",
+      "fatal": true
+    }
+  }
+}

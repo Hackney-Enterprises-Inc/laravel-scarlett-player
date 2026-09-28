@@ -325,6 +325,16 @@ best effort; a beacons-only install with no `media.model` is never asked.
 relation on it. A `morphMany` from your model to `scarlett_views` must use a string local
 key on Postgres, which refuses to compare `varchar` with `integer`.
 
+### Playlists
+
+From player 1.19 every playlist track is its own view: a track change (and `setVideo()`
+with another id, or a replay after `ended`) closes the current view with `exitType`
+`abandoned` and starts a new `viewId`, so each track gets its own `scarlett_views` row.
+From 1.19.1 a track's beacons carry that track's own `videoId` (or the plugin's configured
+one), never the playlist's internal item id, so for a view to link to your model each
+track's `videoId` must be a media id your `ResolvesMedia` maps. The package does not emit
+the embed's `data-playlist` attribute.
+
 ### Server-side context
 
 Everything in a beacon comes from the browser, and anything the package does not know
@@ -586,7 +596,7 @@ $fake->assertBeaconRecorded(fn (array $beacon) => $beacon['event'] === 'viewEnd'
 
 Bind `FakeBeaconStore` yourself for `assertRecorded()`, `assertRecordedCount()` and
 `assertNothingRecorded()` on `BeaconPayload` objects. The player's wire fixtures for
-1.17.0 are under `tests/Fixtures/wire/1.17.0/`, captured from the real transports by the
+1.19.1 are under `tests/Fixtures/wire/1.19.1/`, captured from the real transports by the
 player repo's harness: every beacon event per transport, the three `viewEnd` variants, a
 live session and a clip create and retry.
 
@@ -938,7 +948,7 @@ attribute. What each mode can carry:
 | src, poster, autoplay, muted, loop, start time | yes | yes |
 | brand colour / brand text colour | yes | yes; `data-brand-color`, `data-brand-text-color` |
 | analytics (beaconUrl, videoId, apiKey) | yes; plus `headers()` in the initialiser | yes; `data-analytics-*`, no extra headers |
-| analytics live flag (isLive from the MediaSource) | yes; the initialiser passes it to the analytics plugin, so viewStart is right before the playlist loads | **no**; the embed has no attribute for it, so viewStart reports the player state (false until the playlist loads) |
+| analytics live flag (isLive from the MediaSource) | yes; the initialiser passes it to the analytics plugin, so viewStart is right before the playlist loads | **no**; the embed has no attribute for it; from player 1.18 viewStart carries null before the playlist loads, which the ingest treats as absent, so the view is marked live by a later beacon: late, never wrong |
 | analytics heartbeat interval (`player.heartbeat_interval`) | yes | **no**; no `data-analytics-heartbeat-interval` attribute; the player default applies |
 | share URL + embed base URL | yes | yes; `data-share-url`, `data-embed-base-url` |
 | clips (endpoint, CSRF header) | yes | yes, from player 1.17.0; `data-clips-endpoint`, `data-clips-csrf="meta"`, `data-clips-media-id`, `data-clips-min-duration`, `data-clips-max-duration`, with the `embed.addon.clips` addon; Full and Video builds only; the host page needs its `csrf-token` meta tag |
@@ -950,7 +960,7 @@ This table is generated from `Hei\ScarlettPlayer\Player\FeatureMatrix`, the same
 builder enforces (`FeatureMatrix::toMarkdown()`; a test fails if the two differ). A cell
 reading "from player X" is checked against `player.player_version`: below it, asking for that
 feature in embed mode throws `UnsupportedInEmbedMode`, which names the module-mode
-alternative. On the pinned 1.17.0, embed mode carries clips, chapters and captions; chapters
+alternative. On the pinned 1.19.1 (from 1.17.0), embed mode carries clips, chapters and captions; chapters
 and clips need the embed's addon files, which the component loads for you.
 
 ### Config builder
@@ -1318,23 +1328,23 @@ falls through to the bound resolver.
 | Package | Player wire contracts (`@scarlett-player/*`) | Wire fixture set | Notes |
 |---|---|---|---|
 | `v0.1.0` | 1.17.x, pinned at 1.17.0 (`player.player_version`) | `tests/Fixtures/wire/1.17.0/`, captured | Captured by the player repo's harness against the `v1.17.0` checkout (21 fixtures, a 34-beacon session sequence, 12 harness assertions passing); the browser test runs the npm 1.17.0 embed bundle |
-| `v0.2.0` | 1.17.x, pinned at 1.17.0 (`player.player_version`) | `tests/Fixtures/wire/1.17.0/`, captured | The same captured fixture set as `v0.1.0`, unchanged. Embed mode now carries chapters, captions and clips on 1.17.0, with the `embed.addon.chapters` and `embed.addon.clips` addon files beside the bundle |
+| `v0.2.0` | 1.19.x, pinned at 1.19.1 (`player.player_version`) | `tests/Fixtures/wire/1.19.1/`, captured | Recaptured by the player repo's harness against the `v1.19.1` checkout (21 fixtures, a 26-beacon session sequence, 14 harness assertions passing); the same keys, events and exit types as 1.17.0, and the harness has no video-change scenario, so the 1.19 new-view boundary is not in the set. Embed mode carries chapters, captions and clips (from player 1.17.0), with the `embed.addon.chapters` and `embed.addon.clips` addon files beside the bundle; the browser test runs the npm 1.19.1 embed bundle |
 
 Two contract rules keep the package and the player from drifting:
 
 - **Additive tolerance.** Unknown top-level beacon keys are stored in `custom`, never
   rejected, so upgrading the player ahead of the package never breaks ingest.
-- **Batching is a major.** Player 1.17.x sends one beacon per request. If a later player
+- **Batching is a major.** Player 1.19.x sends one beacon per request. If a later player
   batches beacons (an array body), that is a breaking ingest change: the package answers a
   batched body 422 by name today, and accepting both shapes needs a package major.
 
 The wire fixture set is fully captured. The share-built embed iframe fixture is the one
 derived fixture: it is generated by the share plugin's own snippet builder, taken byte for
-byte from the published 1.17.0 dist, because the capture harness has no share scenario.
+byte from the published 1.19.1 dist, because the capture harness has no share scenario.
 
 The embed bundle location follows `player.embed_bundle`, a template defaulting to
 `{cdn_url}/v{player_version}/embed.js`: the player CDN serves one directory per release
-(`v1.17.0/`) and no `/latest/` alias yet, so the embed bundle is always the pinned version.
+(`v1.19.1/`) and no `/latest/` alias yet, so the embed bundle is always the pinned version.
 
 ## Development
 

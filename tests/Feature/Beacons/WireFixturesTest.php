@@ -8,18 +8,18 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Testing\TestResponse;
 
 /*
- * The player 1.17.0 wire fixtures, CAPTURED by the player repo's harness
+ * The player 1.19.1 wire fixtures, CAPTURED by the player repo's harness
  * (scripts/capture-wire-fixtures.mjs), replayed through the real route into the real
  * store. Each file is { fixture: {...}, request: { method, path, query,
  * headers, body } } with the browser's headers recorded verbatim; the replay sends
  * the method, path, query and body as recorded with the content-type, x-api-key and
  * x-wire-token headers, and drops the browser-only ones. The harness used the literal
  * key 'wire-capture-key', so the test configures that key rather than rewriting the
- * files. Nothing under tests/Fixtures/wire/1.17.0/ is edited but PROVENANCE.md: when
+ * files. Nothing under tests/Fixtures/wire/1.19.1/ is edited but PROVENANCE.md: when
  * a captured body disagrees with the package, the package changes.
  */
 
-const WIRE_SET = '1.17.0';
+const WIRE_SET = '1.19.1';
 const WIRE_KEY = 'wire-capture-key';
 
 /** Headers the replay keeps; everything else was the browser's own. */
@@ -127,7 +127,7 @@ it('lists every captured file in PROVENANCE.md as captured, with the manifest as
     }
 });
 
-it('holds one fixture per event, transport and variant, from player 1.17.0', function (): void {
+it('holds one fixture per event, transport and variant, from player 1.19.1', function (): void {
     $keys = [];
 
     foreach (wireBeacons() as $file => $json) {
@@ -249,11 +249,13 @@ it('stores the live latency summary from the live heartbeat and the live unload 
         ->and((bool) $view->low_latency)->toBe($body['lowLatency']);
 })->with(['heartbeat.fetch.live.json', 'viewEnd.sendBeacon.live-unload.json']);
 
-it('marks the live view live though its captured viewStart says false (true wins), in either order', function (bool $reversed): void {
+it('marks the live view live though its captured viewStart carries isLive null (absent; true wins), in either order', function (bool $reversed): void {
     $viewStart = wireBeacons()['viewStart.fetch.live.json']['request'];
     $heartbeat = wireBeacons()['heartbeat.fetch.live.json']['request'];
 
-    expect($viewStart['body']['isLive'])->toBeFalse()
+    // From 1.18 a viewStart sent before the playlist is read says null, not false.
+    expect($viewStart['body'])->toHaveKey('isLive')
+        ->and($viewStart['body']['isLive'])->toBeNull()
         ->and($heartbeat['body']['isLive'])->toBeTrue()
         ->and($viewStart['body']['viewId'])->toBe($heartbeat['body']['viewId']);
 
@@ -269,7 +271,8 @@ it('merges the captured full session into one view, the same whichever order it 
     $beacons = array_column($sequence['beacons'], 'request');
 
     expect($sequence['fixture']['scenario'])->toBe('full-session')
-        ->and($beacons)->toHaveCount(34);
+        ->and($beacons)->toHaveCount(26)
+        ->and($beacons)->toHaveCount(wireJson('manifest.json')['scenarios']['full-session']['beacons']);
 
     $replay = function (array $requests): array {
         DB::table('scarlett_views')->delete();
@@ -296,5 +299,5 @@ it('merges the captured full session into one view, the same whichever order it 
 
     expect($reversed)->toEqual($inOrder)
         ->and((int) $inOrder['watch_ms'])->toBeGreaterThan(0)
-        ->and(DB::table('scarlett_beacon_events')->count())->toBe(34);
+        ->and(DB::table('scarlett_beacon_events')->count())->toBe(26);
 });

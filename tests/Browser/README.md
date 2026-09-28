@@ -8,7 +8,7 @@ this package's ingest. The group skips unless `SCARLETT_BROWSER=1` is set.
 ## The origins
 
 `BeaconCorsTest.php` runs the real analytics plugin from the pinned
-`@scarlett-player/embed` 1.17.0 bundle (`tests/Fixtures/player/`, see its `PROVENANCE.md`)
+`@scarlett-player/embed` 1.19.1 bundle (`tests/Fixtures/player/`, see its `PROVENANCE.md`)
 with `beacons.key` set and `apiKey` configured in every case.
 
 | Origin | Serves | Why |

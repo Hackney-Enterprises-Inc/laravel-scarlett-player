@@ -65,7 +65,7 @@ it('builds one view row from the first beacon with its identity and environment'
         ->and($view->video_id)->toBe('video-1')
         ->and($view->video_title)->toBe('A video')
         ->and((bool) $view->is_live)->toBeFalse()
-        ->and($view->player_version)->toBe('1.17.0')
+        ->and($view->player_version)->toBe('1.19.1')
         ->and($view->browser)->toBe('Chrome')
         ->and(stamp($view->started_at))->toBe(EloquentBeaconStore::clientTime(Beacons::T0))
         ->and(stamp($view->last_event_at))->toBe(EloquentBeaconStore::clientTime(Beacons::T0))

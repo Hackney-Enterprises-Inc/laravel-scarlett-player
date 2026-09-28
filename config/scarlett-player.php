@@ -365,12 +365,12 @@ return [
         /**
          * The @scarlett-player/* version whose wire contracts this app targets.
          */
-        'player_version' => env('SCARLETT_PLAYER_VERSION', '1.17.0'),
+        'player_version' => env('SCARLETT_PLAYER_VERSION', '1.19.1'),
 
         /**
          * Where the embed bundle lives, as a template: {cdn_url} and {player_version}
          * are replaced with the keys above. The player CDN serves versioned directories
-         * (v1.17.0/embed.js, an ES module); for a floating version use
+         * (v1.19.1/embed.js, an ES module); for a floating version use
          * '{cdn_url}/latest/embed.js' once the CDN serves /latest/. A path ending in
          * .cjs (the UMD build) is loaded as a classic script, anything else as a module.
          */
@@ -382,7 +382,7 @@ return [
          * 60 / interval heartbeats a minute against the scarlett-beacons limit
          * (beacons.throttle, 600 a minute per IP by default), so a short interval on a
          * page with several players needs a higher limit. Module mode only on player
-         * 1.17.0: the embed bundle has no attribute for it.
+         * 1.19.1: the embed bundle has no attribute for it.
          */
         'heartbeat_interval' => env('SCARLETT_HEARTBEAT_INTERVAL'),
     ],

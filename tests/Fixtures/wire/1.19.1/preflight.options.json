@@ -1,0 +1,32 @@
+{
+  "fixture": {
+    "player": "1.19.1",
+    "capturedAt": "2026-09-28T19:01:30.445Z",
+    "harness": "scripts/capture-wire-fixtures.mjs",
+    "chromium": "151.0.7922.34",
+    "node": "v24.20.0",
+    "event": null,
+    "transport": "preflight",
+    "variant": null,
+    "scenario": "full-session",
+    "receivedAt": "2026-09-28T19:01:30.624Z"
+  },
+  "request": {
+    "method": "OPTIONS",
+    "path": "/api/scarlett/beacons",
+    "query": {},
+    "headers": {
+      "accept": "*/*",
+      "access-control-request-method": "POST",
+      "access-control-request-headers": "content-type,x-api-key,x-wire-token",
+      "origin": "http://127.0.0.1:59395",
+      "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.7922.34 Safari/537.36",
+      "sec-fetch-mode": "cors",
+      "sec-fetch-site": "cross-site",
+      "sec-fetch-dest": "empty",
+      "referer": "http://127.0.0.1:59395/",
+      "accept-encoding": "gzip, deflate, br, zstd"
+    },
+    "body": null
+  }
+}

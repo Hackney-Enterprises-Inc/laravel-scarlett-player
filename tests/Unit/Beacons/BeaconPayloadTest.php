@@ -51,7 +51,7 @@ it('splits identity, context, event fields and custom dimensions', function (): 
     expect($payload->event)->toBe('heartbeat')
         ->and($payload->timestamp)->toBe(Beacons::T0)
         ->and($payload->viewId)->toBe(Beacons::VIEW)
-        ->and($payload->context['playerVersion'])->toBe('1.17.0')
+        ->and($payload->context['playerVersion'])->toBe('1.19.1')
         ->and($payload->context['isLive'])->toBeFalse()
         ->and($payload->fields)->toBe(['watchTime' => 10_000, 'qoeScore' => 92.5])
         ->and($payload->custom)->toBe(['plan' => 'ppv', 'tenant' => 7])

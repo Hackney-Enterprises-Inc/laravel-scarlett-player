@@ -7,7 +7,7 @@ use Hei\ScarlettPlayer\Tests\Fixtures\Provider\ArrayResolver;
 
 /*
  * The three Embed named tests. The iframes come from the shipped share plugin
- * (tests/Fixtures/embed/share/1.17.0/iframes.json, see its PROVENANCE.md): a signed
+ * (tests/Fixtures/embed/share/1.19.1/iframes.json, see its PROVENANCE.md): a signed
  * embedUrl() with startTime and shareUrl appended by URL.searchParams.
  */
 
@@ -22,7 +22,7 @@ beforeEach(function (): void {
         ArrayResolver::source('paid-2', isProtected: true),
     );
 
-    $this->iframes = $this->fixtureJson('embed/share/1.17.0/iframes.json');
+    $this->iframes = $this->fixtureJson('embed/share/1.19.1/iframes.json');
 });
 
 it('was built on the embedUrl() this app issues', function (): void {

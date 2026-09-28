@@ -11,7 +11,7 @@ use Illuminate\Support\Facades\Bus;
 use Illuminate\Testing\TestResponse;
 
 /*
- * The clip pair from the player 1.17.0 capture (tests/Fixtures/wire/1.17.0/clip.create.json
+ * The clip pair from the player 1.19.1 capture (tests/Fixtures/wire/1.19.1/clip.create.json
  * and clip.retry.json, see that directory's PROVENANCE.md), replayed as recorded through
  * the real create route. The retry carries the same clientRequestId and body
  * but a later capturedAt, so the idempotency is keyed on clientRequestId alone.
@@ -25,7 +25,7 @@ use Illuminate\Testing\TestResponse;
  */
 function clipWire(string $file): array
 {
-    $path = dirname(__DIR__, 2).'/Fixtures/wire/1.17.0/'.$file;
+    $path = dirname(__DIR__, 2).'/Fixtures/wire/1.19.1/'.$file;
 
     return json_decode((string) file_get_contents($path), true, 512, JSON_THROW_ON_ERROR)['request'];
 }

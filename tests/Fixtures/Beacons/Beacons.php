@@ -7,7 +7,7 @@ namespace Hei\ScarlettPlayer\Tests\Fixtures\Beacons;
 use Hei\ScarlettPlayer\Data\BeaconPayload;
 
 /**
- * Beacon bodies shaped like the ones @scarlett-player/analytics 1.17.0 builds
+ * Beacon bodies shaped like the ones @scarlett-player/analytics 1.19.1 builds
  * (index.ts sendBeacon() and sendUnloadBeacon()): the context keys on every beacon,
  * then the event keys. For the merge tests; the wire fixtures under
  * tests/Fixtures/wire/1.17.0/ (captured) are the per-transport reference bodies.
@@ -34,7 +34,7 @@ final class Beacons
             'videoId' => 'video-1',
             'videoTitle' => 'A video',
             'isLive' => false,
-            'playerVersion' => '1.17.0',
+            'playerVersion' => '1.19.1',
             'playerName' => 'scarlett-player',
             'browser' => 'Chrome',
             'os' => 'macOS',

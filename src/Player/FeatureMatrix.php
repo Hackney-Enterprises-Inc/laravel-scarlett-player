@@ -58,7 +58,7 @@ final class FeatureMatrix
             'module' => true,
             'embed' => false,
             'module_note' => 'the initialiser passes it to the analytics plugin, so viewStart is right before the playlist loads',
-            'embed_note' => 'the embed has no attribute for it, so viewStart reports the player state (false until the playlist loads)',
+            'embed_note' => 'the embed has no attribute for it; from player 1.18 viewStart carries null before the playlist loads, which the ingest treats as absent, so the view is marked live by a later beacon: late, never wrong',
         ],
         'analytics_heartbeat' => [
             'label' => 'analytics heartbeat interval (`player.heartbeat_interval`)',

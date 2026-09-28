@@ -59,7 +59,7 @@ it('keeps the README matrix identical to the generated one', function (): void {
 });
 
 it('supports the heartbeat interval in module mode only on the pinned player', function (): void {
-    expect(FeatureMatrix::supports('analytics_heartbeat', 'module', '1.17.0'))->toBeTrue()
+    expect(FeatureMatrix::supports('analytics_heartbeat', 'module', '1.19.1'))->toBeTrue()
         ->and(FeatureMatrix::cell('analytics_heartbeat', 'embed'))->toBeFalse()
         ->and(FeatureMatrix::toMarkdown())->toContain('no `data-analytics-heartbeat-interval` attribute; the player default applies');
 });
