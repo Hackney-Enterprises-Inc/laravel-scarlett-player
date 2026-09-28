@@ -471,9 +471,13 @@ class RenderClip implements ShouldBeUniqueUntilProcessing, ShouldQueue
         // Approved before it rendered: under disk-public the object must now be public.
         // Under the moderation lock, and compensated, so a concurrent reject wins.
         if ($clip->visibility === ClipVisibility::Public && config('scarlett-player.clips.public_delivery') === 'disk-public') {
-            // A refused write leaves the object private (the safe side) under a ready,
-            // public row: report it and still announce the clip. The row is fresh, so
-            // reconcile's visibility pass retries the write.
+            // A refused PUBLIC write leaves the object private (the safe side) under a
+            // ready, public row: report it and still announce the clip. A refused PRIVATE
+            // write is sync's compensation after a reject landed mid-write: the object is
+            // public under a hidden row, so no ClipReady; rethrown to the render-error
+            // path, which reports it. The row stays ready (renderError() only touches a
+            // processing row) and the reject stamped updated_at, so reconcile's visibility
+            // pass retries the private write until it lands.
             try {
                 try {
                     $clip->withModerationLock(fn () => $clip->syncAssetVisibility());
@@ -481,6 +485,10 @@ class RenderClip implements ShouldBeUniqueUntilProcessing, ShouldQueue
                     $clip->syncAssetVisibility();
                 }
             } catch (ClipStorageException $e) {
+                if ($e->leftObjectExposed()) {
+                    throw $e;
+                }
+
                 report($e);
             }
         }

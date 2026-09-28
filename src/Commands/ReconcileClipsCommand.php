@@ -5,10 +5,10 @@ declare(strict_types=1);
 namespace Hei\ScarlettPlayer\Commands;
 
 use Hei\ScarlettPlayer\Enums\ClipStatus;
-use Hei\ScarlettPlayer\Exceptions\ClipStorageException;
 use Hei\ScarlettPlayer\Jobs\RenderClip;
 use Hei\ScarlettPlayer\Models\Clip;
 use Illuminate\Console\Command;
+use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Support\Facades\Storage;
 use Throwable;
 
@@ -30,7 +30,7 @@ class ReconcileClipsCommand extends Command
     public function handle(): int
     {
         $deleted = $this->pruneRejected();
-        [$resynced, $refused] = $this->resyncVisibility((bool) $this->option('resync-all'));
+        [$resynced, $unsynced] = $this->resyncVisibility((bool) $this->option('resync-all'));
 
         if (! config('scarlett-player.clips.enabled', true)) {
             // While clips are off nothing is dispatched and no stuck render is retried;
@@ -38,7 +38,7 @@ class ReconcileClipsCommand extends Command
             // pass still run.
             $this->components->info("Clips are disabled (clips.enabled): nothing dispatched or retried, {$deleted} rejected assets deleted, {$resynced} objects re-synced.");
 
-            return $this->visibilityOutcome($refused);
+            return $this->visibilityOutcome($unsynced);
         }
 
         $dispatched = $this->dispatchPending();
@@ -49,20 +49,21 @@ class ReconcileClipsCommand extends Command
             $dispatched, $retried, $failed, $deleted, $resynced,
         ));
 
-        return $this->visibilityOutcome($refused);
+        return $this->visibilityOutcome($unsynced);
     }
 
     /**
-     * Fail the run when the disk refused a visibility write: the object and its row are
-     * still apart, and a scheduler or monitor watching the exit code should see it.
+     * Fail the run when a visibility write failed (refused or thrown by the disk): the
+     * object and its row are still apart, and a scheduler or monitor watching the exit
+     * code should see it.
      */
-    private function visibilityOutcome(int $refused): int
+    private function visibilityOutcome(int $unsynced): int
     {
-        if ($refused === 0) {
+        if ($unsynced === 0) {
             return self::SUCCESS;
         }
 
-        $this->components->error("{$refused} clip objects could not be re-synced: the disk refused the visibility write (each is reported). They are retried on the next run.");
+        $this->components->error("{$unsynced} clip objects could not be re-synced: the disk refused the visibility write (each is reported). They are retried on the next run.");
 
         return self::FAILURE;
     }
@@ -144,10 +145,11 @@ class ReconcileClipsCommand extends Command
      * updated_at, while a full pass would cost one billable storage call per clip every
      * minute. A host that suspects older drift runs the command with --resync-all.
      *
-     * A write the disk refuses (false from a throw => false disk) is counted apart and
-     * never as re-synced.
+     * A write that fails (false from a throw => false disk, or a throwing disk) is counted
+     * apart, never as re-synced, and the row's updated_at is bumped so the clip stays
+     * inside the window until a write lands.
      *
-     * @return array{0: int, 1: int} Objects re-synced, and objects whose write the disk refused.
+     * @return array{0: int, 1: int} Objects re-synced, and objects whose write failed.
      */
     private function resyncVisibility(bool $all = false): array
     {
@@ -156,28 +158,31 @@ class ReconcileClipsCommand extends Command
         }
 
         $synced = 0;
-        $refused = 0;
+        $unsynced = 0;
 
         Clip::query()
             ->whereNotNull('path')
             ->when(! $all, fn ($query) => $query->where('updated_at', '>=', now()->subSeconds(self::RESYNC_WINDOW)))
             ->orderBy('id')
-            ->each(function (Clip $clip) use (&$synced, &$refused): void {
+            ->each(function (Clip $clip) use (&$synced, &$unsynced): void {
                 try {
                     $clip->withModerationLock(fn () => $clip->syncAssetVisibility());
                     $synced++;
+                } catch (LockTimeoutException $e) {
+                    // A moderation in flight holds the clip: it writes the row and the
+                    // object itself, and stamps updated_at. Not a failure of this pass.
+                    report($e);
                 } catch (Throwable $e) {
-                    // Refused by the disk (counted, the run fails), locked by a moderation
-                    // in flight, or storage throwing: reported, retried next run.
-                    if ($e instanceof ClipStorageException) {
-                        $refused++;
-                    }
-
+                    // The write failed (refused or thrown by the disk): the run fails, and
+                    // a conditional touch keeps the clip inside the scheduled window, so
+                    // it really is retried next run.
+                    $unsynced++;
+                    Clip::query()->whereKey($clip->getKey())->update(['updated_at' => now()]);
                     report($e);
                 }
             });
 
-        return [$synced, $refused];
+        return [$synced, $unsynced];
     }
 
     private function pruneRejected(): int

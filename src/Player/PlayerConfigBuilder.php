@@ -33,6 +33,12 @@ class PlayerConfigBuilder implements Arrayable, JsonSerializable
     /** The host config schema version toArray() emits. */
     public const SCHEMA_VERSION = 1;
 
+    /**
+     * The longest heartbeat interval, in milliseconds: the largest delay browsers honour
+     * in setInterval() (a signed 32-bit int). Anything longer fires almost immediately.
+     */
+    public const MAX_HEARTBEAT_MS = 2147483647;
+
     /** The player CDN layout: versioned directories, the ES module build. */
     public const DEFAULT_EMBED_BUNDLE = '{cdn_url}/v{player_version}/embed.js';
 
@@ -255,8 +261,12 @@ class PlayerConfigBuilder implements Arrayable, JsonSerializable
             ? (float) $value
             : null;
 
-        // Under a millisecond rounds to 0, which the player reads as its default.
-        if ($seconds === null || ! is_finite($seconds) || round($seconds * 1000) < 1) {
+        $milliseconds = $seconds === null ? NAN : round($seconds * 1000);
+
+        // Under a millisecond rounds to 0, which the player reads as its default. Above
+        // the browser timer limit, setInterval() fires almost at once (a heartbeat flood);
+        // that bound also keeps the int cast in analyticsConfig() in range.
+        if (! is_finite($milliseconds) || $milliseconds < 1 || $milliseconds > self::MAX_HEARTBEAT_MS) {
             throw InvalidPlayerConfigException::heartbeatInterval($value);
         }
 
@@ -632,9 +642,32 @@ class PlayerConfigBuilder implements Arrayable, JsonSerializable
      */
     protected function assertSupported(string $feature): void
     {
-        if ($this->mode === FeatureMatrix::EMBED && ! FeatureMatrix::supports($feature, $this->mode, $this->playerVersion())) {
+        if ($this->mode !== FeatureMatrix::EMBED) {
+            return;
+        }
+
+        if (! FeatureMatrix::supports($feature, $this->mode, $this->playerVersion())) {
             throw new UnsupportedInEmbedMode($feature, $this->playerVersion());
         }
+
+        $build = $this->embedBundleFile();
+
+        if (in_array($feature, FeatureMatrix::VIDEO_BUILD_ONLY, true) && str_starts_with(strtolower($build), 'embed.audio')) {
+            throw new UnsupportedInEmbedMode($feature, $this->playerVersion(), $build);
+        }
+    }
+
+    /**
+     * The embed bundle's file name, from the player.embed_bundle template (no CDN URL
+     * needed), e.g. embed.js, embed.video.umd.cjs, embed.audio.js.
+     */
+    protected function embedBundleFile(): string
+    {
+        $template = $this->config->get('scarlett-player.player.embed_bundle');
+        $template = is_string($template) && $template !== '' ? $template : self::DEFAULT_EMBED_BUNDLE;
+        $path = (string) strtok($template, '?#');
+
+        return substr($path, (int) strrpos($path, '/') + (str_contains($path, '/') ? 1 : 0));
     }
 
     /**

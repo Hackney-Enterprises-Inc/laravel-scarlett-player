@@ -377,6 +377,9 @@ it('rejects a heartbeat interval that is not a number above zero', function (mix
     'bool' => [true],
     'array' => [[5]],
     'under a millisecond' => [0.0001],
+    'out of int range' => [1e300],
+    'env string out of range' => ['1e300'],
+    'past the browser timer limit' => [2147483.648],
 ])->throws(InvalidPlayerConfigException::class, 'heartbeat interval');
 
 it('rejects a setter value that is not above zero', function (int|float $value): void {
@@ -480,4 +483,46 @@ it('names the addon files the embed config needs, beside the bundle and in its f
 
     expect(ScarlettPlayer::for('video-1')->mode('embed')->withClips()->embedAddonUrls())
         ->toBe(['https://cdn.example.test/scarlett-player/latest/embed.addon.clips.umd.cjs']);
+});
+
+it('accepts the longest interval browsers honour and rejects 1e300 seconds from the setter', function (): void {
+    config()->set('scarlett-player.player.heartbeat_interval', 2147483.647);
+
+    expect(ScarlettPlayer::for('video-1')->withAnalytics()->toArray()['analytics']['heartbeatInterval'])->toBe(PlayerConfigBuilder::MAX_HEARTBEAT_MS);
+
+    ScarlettPlayer::for('video-1')->heartbeatInterval(1e300);
+})->throws(InvalidPlayerConfigException::class, 'browser timer limit');
+
+it('refuses clips, chapters and captions on the embed Audio build, naming the build', function (Closure $enable): void {
+    config()->set('scarlett-player.player.embed_bundle', '{cdn_url}/v{player_version}/embed.audio.js');
+
+    $enable(ScarlettPlayer::for('video-1')->mode('embed'));
+})->with([
+    'clips' => [fn (PlayerConfigBuilder $b) => $b->withClips()],
+    'chapters' => [fn (PlayerConfigBuilder $b) => $b->withChapters([])],
+    'captions' => [fn (PlayerConfigBuilder $b) => $b->withCaptions([])],
+    'switching to embed' => [fn (PlayerConfigBuilder $b) => $b->mode('module')->withCaptions([])->mode('embed')],
+])->throws(UnsupportedInEmbedMode::class, 'Audio build [embed.audio.js]');
+
+it('keeps clips, chapters and captions for the Full and Video builds, and the rest on Audio', function (string $bundle): void {
+    config()->set('scarlett-player.player.embed_bundle', $bundle);
+
+    $builder = ScarlettPlayer::for('video-1')->mode('embed')->withClips()->withChapters([])->withCaptions([]);
+
+    expect($builder->toDataAttributes())->toHaveKeys(['data-clips-endpoint', 'data-chapters', 'data-captions']);
+})->with(['{cdn_url}/v{player_version}/embed.js', '{cdn_url}/latest/embed.video.umd.cjs', 'https://cdn.example.test/embed.video.js?v=1']);
+
+it('still builds analytics and share on the Audio build', function (): void {
+    config()->set('scarlett-player.player.embed_bundle', '{cdn_url}/v{player_version}/embed.audio.umd.cjs');
+
+    $attributes = ScarlettPlayer::for('video-1')->mode('embed')->withAnalytics()->withShare('https://host.test/w')->toDataAttributes();
+
+    expect($attributes)->toHaveKeys(['data-analytics-video-id', 'data-share-url']);
+
+    try {
+        ScarlettPlayer::for('video-1')->mode('embed')->withCaptions([]);
+        $this->fail('Expected UnsupportedInEmbedMode.');
+    } catch (UnsupportedInEmbedMode $e) {
+        expect($e->build)->toBe('embed.audio.umd.cjs')->and($e->feature)->toBe('captions');
+    }
 });

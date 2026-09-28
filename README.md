@@ -44,10 +44,11 @@ php artisan scarlett:doctor
   (see [Server-side context](#server-side-context); the `beacon context` doctor check fails
   until they exist). Without a resolver nothing reads or writes them, so a host that does
   not use the hook needs no migration.
-- **`scarlett:clips:reconcile` can exit non-zero.** A clip visibility write the disk
-  refuses (including a `false` from a disk configured `throw => false`) is now reported and
+- **`scarlett:clips:reconcile` can exit non-zero.** A clip visibility write that fails (a
+  `false` from a disk configured `throw => false`, or a disk that throws) is now reported and
   fails the run instead of counting as re-synced. A scheduler or monitor that alerts on
-  failed commands will see it; the write is retried on the next run.
+  failed commands will see it; the clip stays in the pass's window and is retried on the next
+  run.
 - **One new event key for redacted beacons.** The raw log's `event_key` now hashes the
   beacon as the browser sent it. A beacon that a `beacons.pipeline` step redacts therefore
   gets a new key once across the upgrade: a v0.1.0 delivery and its v0.2.0 retry are stored
@@ -809,7 +810,10 @@ Assets are written **private**, always, at `{clips.path}/{uuid}.mp4` on `clips.d
   `LockTimeoutException` and can be retried. A visibility write the disk refuses throws
   `ClipStorageException`, including a `false` from a disk configured `throw => false`:
   `reject()` then leaves the row untouched, and `scarlett:clips:reconcile` reports the
-  clip and exits with a failure code until a retry lands.
+  clip and exits with a failure code until a retry lands (a disk that throws counts the same;
+  a clip locked by a moderation in flight does not). A clip approved before it rendered still
+  announces `ClipReady` when its public write is refused (the object stays private), but not
+  when a reject landed mid-render and the write hiding the object is refused.
 - `ready` and not public: no playback URL. The status response carries a `previewUrl`
   (a temporary signed route, valid for `clips.preview_ttl` seconds) for viewers who pass
   `preview`: the submitter while the clip waits for review, or a moderator.
@@ -937,9 +941,9 @@ attribute. What each mode can carry:
 | analytics live flag (isLive from the MediaSource) | yes; the initialiser passes it to the analytics plugin, so viewStart is right before the playlist loads | **no**; the embed has no attribute for it, so viewStart reports the player state (false until the playlist loads) |
 | analytics heartbeat interval (`player.heartbeat_interval`) | yes | **no**; no `data-analytics-heartbeat-interval` attribute; the player default applies |
 | share URL + embed base URL | yes | yes; `data-share-url`, `data-embed-base-url` |
-| clips (endpoint, CSRF header) | yes | yes, from player 1.17.0; `data-clips-endpoint`, `data-clips-csrf="meta"`, `data-clips-media-id`, `data-clips-min-duration`, `data-clips-max-duration`, with the `embed.addon.clips` addon; the host page needs its `csrf-token` meta tag |
-| chapters | yes | yes, from player 1.17.0; `data-chapters` (JSON or a WebVTT URL), with the `embed.addon.chapters` addon |
-| captions | yes | yes, from player 1.17.0; `data-captions`, no addon |
+| clips (endpoint, CSRF header) | yes | yes, from player 1.17.0; `data-clips-endpoint`, `data-clips-csrf="meta"`, `data-clips-media-id`, `data-clips-min-duration`, `data-clips-max-duration`, with the `embed.addon.clips` addon; Full and Video builds only; the host page needs its `csrf-token` meta tag |
+| chapters | yes | yes, from player 1.17.0; `data-chapters` (JSON or a WebVTT URL), with the `embed.addon.chapters` addon; Full and Video builds only |
+| captions | yes | yes, from player 1.17.0; `data-captions`, no addon; Full and Video builds only |
 <!-- feature-matrix:end -->
 
 This table is generated from `Hei\ScarlettPlayer\Player\FeatureMatrix`, the same table the
@@ -982,7 +986,9 @@ The heartbeat interval is `player.heartbeat_interval` (`SCARLETT_HEARTBEAT_INTER
 seconds; `heartbeatInterval()` overrides it for one player, and null goes back to the config
 value. The analytics block then carries `heartbeatInterval` in milliseconds, which is what the
 plugin takes (`2.5` becomes `2500`). Unset, nothing is emitted and the player's own 10 s
-applies. Anything that is not a number above zero throws `InvalidPlayerConfigException`. The
+applies. The value must be from 0.001 to 2147483.647 seconds (the longest delay browsers honour
+in `setInterval()`; a longer one fires almost at once); anything else throws
+`InvalidPlayerConfigException`. The
 embed bundle has no attribute for it: in embed mode a configured interval is left out and the
 page still renders, while calling `heartbeatInterval()` throws `UnsupportedInEmbedMode`.
 `withClips()` also refuses protected media until you register your own policy for
@@ -1069,6 +1075,9 @@ attribute, such as `class`, goes on the container.
   ending in `.cjs` (the UMD build) is loaded as a classic script. For a floating version set
   `SCARLETT_EMBED_BUNDLE='{cdn_url}/latest/embed.js'`, once the CDN serves `/latest/` (it
   serves versioned directories only today).
+- **Embed builds.** Clips, chapters and captions need the Full (`embed.js`) or Video
+  (`embed.video.*`) build. With `player.embed_bundle` on the Audio build (`embed.audio.*`),
+  asking for them throws `UnsupportedInEmbedMode`, naming the build.
 - **Embed addons.** With `:chapters` or `clips`, the component also loads
   `embed.addon.chapters.js` and `embed.addon.clips.js` after the bundle. They come from the
   bundle's own directory, in its flavour (`.umd.cjs` beside a `.cjs` bundle), and each is

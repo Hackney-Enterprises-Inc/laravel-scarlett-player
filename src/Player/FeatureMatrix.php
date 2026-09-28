@@ -23,6 +23,12 @@ final class FeatureMatrix
     public const MODES = [self::MODULE, self::EMBED];
 
     /**
+     * Features the embed's Full and Video builds carry and its Audio build does not
+     * (embed.audio.*): the builder refuses them in embed mode on that build.
+     */
+    public const VIDEO_BUILD_ONLY = ['clips', 'chapters', 'captions'];
+
+    /**
      * @var array<string, array{label: string, module: bool|string, embed: bool|string, module_note: string, embed_note: string}>
      */
     public const FEATURES = [
@@ -73,21 +79,21 @@ final class FeatureMatrix
             'module' => true,
             'embed' => '1.17.0',
             'module_note' => '',
-            'embed_note' => '`data-clips-endpoint`, `data-clips-csrf="meta"`, `data-clips-media-id`, `data-clips-min-duration`, `data-clips-max-duration`, with the `embed.addon.clips` addon; the host page needs its `csrf-token` meta tag',
+            'embed_note' => '`data-clips-endpoint`, `data-clips-csrf="meta"`, `data-clips-media-id`, `data-clips-min-duration`, `data-clips-max-duration`, with the `embed.addon.clips` addon; Full and Video builds only; the host page needs its `csrf-token` meta tag',
         ],
         'chapters' => [
             'label' => 'chapters',
             'module' => true,
             'embed' => '1.17.0',
             'module_note' => '',
-            'embed_note' => '`data-chapters` (JSON or a WebVTT URL), with the `embed.addon.chapters` addon',
+            'embed_note' => '`data-chapters` (JSON or a WebVTT URL), with the `embed.addon.chapters` addon; Full and Video builds only',
         ],
         'captions' => [
             'label' => 'captions',
             'module' => true,
             'embed' => '1.17.0',
             'module_note' => '',
-            'embed_note' => '`data-captions`, no addon',
+            'embed_note' => '`data-captions`, no addon; Full and Video builds only',
         ],
     ];
 
