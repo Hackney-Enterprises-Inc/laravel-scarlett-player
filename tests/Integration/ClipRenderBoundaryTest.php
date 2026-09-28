@@ -51,6 +51,11 @@ beforeEach(function (): void {
 });
 
 afterEach(function (): void {
+    // The group's beforeEach skips this file without ffmpeg, so the workdir is never set.
+    if (! isset($this->workdir)) {
+        return;
+    }
+
     foreach (glob($this->workdir.DIRECTORY_SEPARATOR.'*') ?: [] as $file) {
         @unlink($file);
     }
