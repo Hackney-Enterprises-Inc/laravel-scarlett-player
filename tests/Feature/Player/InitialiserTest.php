@@ -199,3 +199,27 @@ it('passes isLive from the MediaSource into the analytics plugin config', functi
 
     expect($analytics['config']['isLive'])->toBe($live);
 })->with(['live' => true, 'vod' => false]);
+
+it('passes the heartbeat interval into the analytics plugin in milliseconds', function (): void {
+    config()->set('scarlett-player.player.heartbeat_interval', '5');
+
+    $result = runInitialiser(ScarlettPlayer::for('video-1')->withAnalytics()->toArray());
+    $analytics = collect($result['options']['plugins'])->firstWhere('factory', 'analytics');
+
+    expect($analytics['config']['heartbeatInterval'])->toBe(5000);
+});
+
+it('sends no heartbeat interval to the plugin when none is configured', function (): void {
+    $result = runInitialiser(ScarlettPlayer::for('video-1')->withAnalytics()->toArray());
+    $analytics = collect($result['options']['plugins'])->firstWhere('factory', 'analytics');
+
+    expect($analytics['config'])->not->toHaveKey('heartbeatInterval');
+});
+
+it('lets a page-wide analytics option beat the configured heartbeat interval', function (): void {
+    $result = runPage(ScarlettPlayer::for('video-1')->withAnalytics()->heartbeatInterval(5)->toArray(), 'heartbeat');
+    $analytics = collect($result['plugins'])->firstWhere('factory', 'analytics');
+
+    expect($result['created'])->toBe(1)
+        ->and($analytics['config']['heartbeatInterval'])->toBe(30000);
+});

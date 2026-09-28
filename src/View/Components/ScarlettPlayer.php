@@ -44,6 +44,7 @@ class ScarlettPlayer extends Component
         ?string $brandColor = null,
         ?string $brandTextColor = null,
         bool $analytics = false,
+        int|float|string|null $heartbeatInterval = null,
         bool $clips = false,
         iterable|string|null $chapters = null,
         ?iterable $captions = null,
@@ -72,6 +73,13 @@ class ScarlettPlayer extends Component
 
         if ($analytics) {
             $builder->withAnalytics();
+        }
+
+        // Seconds; a plain attribute arrives as a string, :heartbeat-interval as a number.
+        $heartbeat = PlayerConfigBuilder::heartbeatSeconds($heartbeatInterval);
+
+        if ($heartbeat !== null) {
+            $builder->heartbeatInterval($heartbeat);
         }
 
         if ($clips) {

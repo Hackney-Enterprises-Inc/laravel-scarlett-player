@@ -9,6 +9,7 @@
 //   no-autorun  the file is imported with a container on the page and nothing else
 //   manual      the container carries data-scarlett-manual
 //   remove-csrf as inline, with a host header of null for X-CSRF-TOKEN
+//   heartbeat   as inline, with a page-wide analytics heartbeatInterval of 30000
 // Prints { created, plugins } where plugins are those createPlayer() received, with the
 // clips endpoint and analytics headers functions called.
 import { registerHooks } from 'node:module';
@@ -47,7 +48,11 @@ if (scenario === 'remove-csrf') {
   hostOptions.clips.endpoint.headers = async () => ({ 'X-CSRF-TOKEN': null, 'X-XSRF-TOKEN': 'from-cookie' });
 }
 
-if (scenario === 'inline' || scenario === 'remove-csrf') {
+if (scenario === 'heartbeat') {
+  hostOptions.analytics.heartbeatInterval = 30000;
+}
+
+if (scenario === 'inline' || scenario === 'remove-csrf' || scenario === 'heartbeat') {
   window.scarlettPlayerOptions = hostOptions;
   await import(pathToFileURL(initPath).href);
   // The component's inline script.

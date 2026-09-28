@@ -54,6 +54,13 @@ final class FeatureMatrix
             'module_note' => 'the initialiser passes it to the analytics plugin, so viewStart is right before the playlist loads',
             'embed_note' => 'the embed has no attribute for it, so viewStart reports the player state (false until the playlist loads)',
         ],
+        'analytics_heartbeat' => [
+            'label' => 'analytics heartbeat interval (`player.heartbeat_interval`)',
+            'module' => true,
+            'embed' => false,
+            'module_note' => '',
+            'embed_note' => 'no `data-analytics-heartbeat-interval` attribute; the player default applies',
+        ],
         'share' => [
             'label' => 'share URL + embed base URL',
             'module' => true,
@@ -64,23 +71,23 @@ final class FeatureMatrix
         'clips' => [
             'label' => 'clips (endpoint, CSRF header)',
             'module' => true,
-            'embed' => false,
+            'embed' => '1.17.0',
             'module_note' => '',
-            'embed_note' => 'until the embed ships `data-clips-endpoint` + `data-clips-csrf="meta"`',
+            'embed_note' => '`data-clips-endpoint`, `data-clips-csrf="meta"`, `data-clips-media-id`, `data-clips-min-duration`, `data-clips-max-duration`, with the `embed.addon.clips` addon; the host page needs its `csrf-token` meta tag',
         ],
         'chapters' => [
             'label' => 'chapters',
             'module' => true,
-            'embed' => false,
+            'embed' => '1.17.0',
             'module_note' => '',
-            'embed_note' => 'until the embed ships `data-chapters`',
+            'embed_note' => '`data-chapters` (JSON or a WebVTT URL), with the `embed.addon.chapters` addon',
         ],
         'captions' => [
             'label' => 'captions',
             'module' => true,
-            'embed' => false,
+            'embed' => '1.17.0',
             'module_note' => '',
-            'embed_note' => 'until the embed ships `data-captions`',
+            'embed_note' => '`data-captions`, no addon',
         ],
     ];
 

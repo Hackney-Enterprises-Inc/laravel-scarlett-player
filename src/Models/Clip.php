@@ -10,6 +10,7 @@ use Hei\ScarlettPlayer\Events\ClipApproved;
 use Hei\ScarlettPlayer\Events\ClipFailed;
 use Hei\ScarlettPlayer\Events\ClipRejected;
 use Hei\ScarlettPlayer\Exceptions\ClipStateException;
+use Hei\ScarlettPlayer\Exceptions\ClipStorageException;
 use Hei\ScarlettPlayer\Jobs\RenderClip;
 use Illuminate\Bus\UniqueLock;
 use Illuminate\Container\Container;
@@ -263,6 +264,8 @@ class Clip extends Model
      *
      * @throws ClipStateException when the clip failed, was rejected before rendering, or
      *                            is ready with no asset (deleted by the rejected-asset pruning).
+     * @throws ClipStorageException when the disk refuses the object write; the row is
+     *                              already public and the object private until reconcile.
      * @throws LockTimeoutException when another moderation of this clip holds the lock.
      */
     public function approve(?Authenticatable $by = null): static
@@ -305,18 +308,20 @@ class Clip extends Model
      * that lands after a render finished never overwrites ready; runs under the clip's
      * moderation lock like approve().
      *
+     * @throws ClipStorageException when the disk refuses to make the object private; the
+     *                              row is untouched and ClipRejected does not fire.
      * @throws LockTimeoutException when another moderation of this clip holds the lock.
      */
     public function reject(?Authenticatable $by = null): static
     {
         $this->withModerationLock(function () use ($by): void {
-            // Object first, row second: hiding fails safe. If the storage write throws,
-            // the row is untouched and the moderator sees the error; there is never a
-            // hidden row in front of a public object.
+            // Object first, row second: hiding fails safe. If the storage write throws
+            // or returns false, the row is untouched and the moderator sees the error;
+            // there is never a hidden row in front of a public object.
             $this->refresh();
 
             if ($this->hasAsset()) {
-                Storage::disk((string) $this->disk)->setVisibility((string) $this->path, 'private');
+                $this->writeVisibility('private');
             }
 
             $attributes = [
@@ -382,6 +387,11 @@ class Clip extends Model
      * that dies between the row and the object, leaves them apart until
      * scarlett:clips:reconcile's visibility pass re-syncs every stored clip. reject()
      * avoids the dangerous half by writing the object private before the row.
+     *
+     * A write the disk refuses (false from a throw => false disk) throws, so neither a
+     * moderator nor the reconciler takes a failed write for a healed one.
+     *
+     * @throws ClipStorageException when the disk refuses either write.
      */
     public function syncAssetVisibility(): void
     {
@@ -391,10 +401,9 @@ class Clip extends Model
             return;
         }
 
-        $disk = Storage::disk((string) $this->disk);
         $public = $this->wantsPublicObject();
 
-        $disk->setVisibility((string) $this->path, $public ? 'public' : 'private');
+        $this->writeVisibility($public ? 'public' : 'private');
 
         if (! $public) {
             return;
@@ -403,8 +412,33 @@ class Clip extends Model
         $this->refresh();
 
         if (! $this->wantsPublicObject() && $this->hasAsset()) {
-            $disk->setVisibility((string) $this->path, 'private');
+            $this->writeVisibility('private');
         }
+    }
+
+    /**
+     * Set the stored object's visibility, treating a false return as the failure it is:
+     * a disk with throw => false answers a failed write with false, not an exception.
+     * The one false that is not a failure: a private write to an object that no longer
+     * exists, since nothing can be served from it.
+     *
+     * @throws ClipStorageException when the disk refuses the write.
+     */
+    private function writeVisibility(string $visibility): void
+    {
+        $disk = (string) $this->disk;
+        $path = (string) $this->path;
+        $storage = Storage::disk($disk);
+
+        if ($storage->setVisibility($path, $visibility) !== false) {
+            return;
+        }
+
+        if ($visibility === 'private' && ! $storage->exists($path)) {
+            return;
+        }
+
+        throw ClipStorageException::visibilityNotSet((string) $this->uuid, $disk, $path, $visibility);
     }
 
     /**

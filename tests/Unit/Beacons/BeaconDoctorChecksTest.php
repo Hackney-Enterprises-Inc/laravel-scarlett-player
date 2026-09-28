@@ -4,12 +4,16 @@ declare(strict_types=1);
 
 use Hei\ScarlettPlayer\Doctor\CheckRegistry;
 use Hei\ScarlettPlayer\Doctor\CheckResult;
+use Hei\ScarlettPlayer\Doctor\Checks\BeaconContextCheck;
 use Hei\ScarlettPlayer\Doctor\Checks\BeaconIpColumnCheck;
 use Hei\ScarlettPlayer\Doctor\Checks\BeaconQueueCheck;
 use Hei\ScarlettPlayer\Doctor\Checks\BeaconRouteCheck;
 use Hei\ScarlettPlayer\Doctor\Checks\CorsCheck;
 use Hei\ScarlettPlayer\Doctor\CheckStatus;
+use Hei\ScarlettPlayer\Tests\Fixtures\Beacons\DropHeartbeats;
+use Hei\ScarlettPlayer\Tests\Fixtures\Beacons\RecordingContext;
 use Illuminate\Routing\RouteCollection;
+use Illuminate\Support\Facades\Schema;
 
 /*
  * The beacons module's doctor checks: CORS for the unload beacon, the beacon queue,
@@ -44,7 +48,7 @@ function corsRecipe(array $overrides = []): array
 it('lists the beacon checks in the doctor registry', function (): void {
     $names = array_map(fn ($check): string => $check::class, app(CheckRegistry::class)->checks());
 
-    expect($names)->toContain(CorsCheck::class, BeaconQueueCheck::class, BeaconRouteCheck::class, BeaconIpColumnCheck::class);
+    expect($names)->toContain(CorsCheck::class, BeaconQueueCheck::class, BeaconRouteCheck::class, BeaconIpColumnCheck::class, BeaconContextCheck::class);
 });
 
 describe('beacon cors', function (): void {
@@ -167,5 +171,72 @@ describe('beacon ip column', function (): void {
         config()->set('scarlett-player.beacons.store_ip', true);
 
         expect(beaconCheck(BeaconIpColumnCheck::class)->status)->toBe(CheckStatus::Warn);
+    });
+});
+
+describe('beacon context', function (): void {
+    it('passes when no resolver is configured', function (): void {
+        $result = beaconCheck(BeaconContextCheck::class);
+
+        expect($result->status)->toBe(CheckStatus::Pass)
+            ->and($result->message)->toContain('not set');
+    });
+
+    it('fails when the class does not exist', function (): void {
+        config()->set('scarlett-player.beacons.context', 'App\\Beacons\\Missing');
+
+        $result = beaconCheck(BeaconContextCheck::class);
+
+        expect($result->status)->toBe(CheckStatus::Fail)
+            ->and($result->message)->toContain('App\\Beacons\\Missing');
+    });
+
+    it('fails when the class is not a resolver', function (): void {
+        config()->set('scarlett-player.beacons.context', DropHeartbeats::class);
+
+        $result = beaconCheck(BeaconContextCheck::class);
+
+        expect($result->status)->toBe(CheckStatus::Fail)
+            ->and($result->message)->toContain('ResolvesBeaconContext');
+    });
+
+    it('fails when the server columns were never migrated', function (): void {
+        $this->usesMigrations();
+        config()->set('scarlett-player.beacons.context', RecordingContext::class);
+
+        Schema::table('scarlett_views', function ($table): void {
+            $table->dropColumn(['server', 'server_stamps']);
+        });
+
+        $result = beaconCheck(BeaconContextCheck::class);
+
+        // Put them back for the migration rollback that ends the test.
+        Schema::table('scarlett_views', function ($table): void {
+            $table->json('server')->nullable();
+            $table->json('server_stamps')->nullable();
+        });
+
+        expect($result->status)->toBe(CheckStatus::Fail)
+            ->and($result->message)->toContain('add the two nullable json columns server and server_stamps');
+    });
+
+    it('passes when configured and migrated', function (): void {
+        $this->usesMigrations();
+        config()->set('scarlett-player.beacons.context', RecordingContext::class);
+
+        expect(beaconCheck(BeaconContextCheck::class)->status)->toBe(CheckStatus::Pass);
+    });
+
+    it('warns when the views table is not migrated yet', function (): void {
+        config()->set('scarlett-player.beacons.context', RecordingContext::class);
+
+        expect(beaconCheck(BeaconContextCheck::class)->status)->toBe(CheckStatus::Warn);
+    });
+
+    it('leaves the schema to a host store', function (): void {
+        config()->set('scarlett-player.beacons.context', RecordingContext::class);
+        config()->set('scarlett-player.beacons.store', 'null');
+
+        expect(beaconCheck(BeaconContextCheck::class)->status)->toBe(CheckStatus::Pass);
     });
 });

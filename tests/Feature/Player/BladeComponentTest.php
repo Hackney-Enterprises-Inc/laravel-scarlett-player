@@ -115,7 +115,9 @@ it('answers to x-scarlett::player as well', function (): void {
         ->toContain('data-scarlett-host="ns-config"');
 });
 
-it('throws UnsupportedInEmbedMode for clips in embed mode', function (): void {
+it('throws UnsupportedInEmbedMode for clips in embed mode before player 1.17.0', function (): void {
+    config()->set('scarlett-player.player.player_version', '1.16.3');
+
     try {
         $this->blade('<x-scarlett-player media="video-1" mode="embed" clips />');
         $this->fail('Expected the render to throw.');
@@ -151,4 +153,79 @@ it('loads a UMD embed bundle as a classic script, with the nonce', function (): 
 it('adds the nonce to a module embed bundle too', function (): void {
     expect((string) $this->blade('<x-scarlett-player media="video-1" mode="embed" nonce="n1" />'))
         ->toContain('<script src="https://cdn.example.test/scarlett-player/v'.config('scarlett-player.player.player_version').'/embed.js" type="module" nonce="n1"></script>');
+});
+
+it('passes the heartbeat-interval attribute to the analytics config in milliseconds', function (string $attribute, int $ms): void {
+    $config = renderedConfig((string) $this->blade("<x-scarlett-player media=\"video-1\" analytics {$attribute} />"));
+
+    expect($config['analytics']['heartbeatInterval'])->toBe($ms);
+})->with([
+    'plain attribute (a string)' => ['heartbeat-interval="5"', 5000],
+    'bound number' => [':heartbeat-interval="2.5"', 2500],
+]);
+
+it('takes the configured heartbeat interval without the attribute', function (): void {
+    config()->set('scarlett-player.player.heartbeat_interval', '15');
+
+    $config = renderedConfig((string) $this->blade('<x-scarlett-player media="video-1" analytics />'));
+
+    expect($config['analytics']['heartbeatInterval'])->toBe(15000);
+});
+
+it('refuses a heartbeat-interval attribute that is not a number above zero', function (): void {
+    $this->blade('<x-scarlett-player media="video-1" analytics heartbeat-interval="soon" />');
+})->throws(ViewException::class, 'heartbeat interval');
+
+it('throws UnsupportedInEmbedMode for a heartbeat-interval attribute in embed mode', function (): void {
+    try {
+        $this->blade('<x-scarlett-player media="video-1" mode="embed" analytics heartbeat-interval="5" />');
+    } catch (ViewException $e) {
+        throw $e->getPrevious() ?? $e;
+    }
+})->throws(UnsupportedInEmbedMode::class, 'heartbeat');
+
+it('loads the chapters and clips addons after the bundle, once each, in embed mode', function (): void {
+    $html = (string) $this->blade(
+        '<x-scarlett-player media="video-1" mode="embed" :captions="$captions" player-id="e1" />'.
+        '<x-scarlett-player media="video-1" mode="embed" clips :chapters="$chapters" player-id="e2" />'.
+        '<x-scarlett-player media="video-1" mode="embed" clips :chapters="$chapters" player-id="e3" />',
+        [
+            'captions' => [['language' => 'en', 'label' => 'English', 'src' => 'https://cdn.example.test/en.vtt']],
+            'chapters' => [['time' => 0, 'label' => 'Intro']],
+        ],
+    );
+    $base = 'https://cdn.example.test/scarlett-player/v'.config('scarlett-player.player.player_version');
+
+    preg_match_all('#<script src="([^"]+)"#', $html, $scripts);
+
+    expect($scripts[1])->toBe([
+        "{$base}/embed.js",
+        "{$base}/embed.addon.chapters.js",
+        "{$base}/embed.addon.clips.js",
+    ])
+        ->and($html)->toContain('<script src="'.$base.'/embed.addon.clips.js" type="module"></script>')
+        ->and($html)->toContain('data-clips-csrf="meta"')
+        ->and($html)->toContain('data-captions="[')
+        ->and($html)->toContain('data-chapters="[');
+
+    foreach (['data-clips-endpoint', 'data-clips-csrf', 'data-clips-media-id', 'data-captions', 'data-chapters'] as $name) {
+        expect((string) file_get_contents(EMBED_README))->toContain("`{$name}`");
+    }
+});
+
+it('loads no addon for an embed player with captions only', function (): void {
+    $html = (string) $this->blade('<x-scarlett-player media="video-1" mode="embed" :captions="$captions" />', [
+        'captions' => [['language' => 'en', 'label' => 'English', 'src' => 'https://cdn.example.test/en.vtt']],
+    ]);
+
+    expect($html)->not->toContain('embed.addon.');
+});
+
+it('loads the UMD addons as classic scripts beside a UMD bundle', function (): void {
+    config()->set('scarlett-player.player.embed_bundle', '{cdn_url}/v{player_version}/embed.umd.cjs');
+
+    $html = (string) $this->blade('<x-scarlett-player media="video-1" mode="embed" clips nonce="n0nce" />');
+
+    expect($html)->toContain('embed.addon.clips.umd.cjs" nonce="n0nce"></script>')
+        ->and($html)->not->toContain('type="module"');
 });

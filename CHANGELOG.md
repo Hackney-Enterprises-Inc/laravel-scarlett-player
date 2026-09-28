@@ -4,11 +4,31 @@ All notable changes to `hei/laravel-scarlett-player` are documented here. The fo
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] - 2026-09-28
+
+### Added
+
+- `beacons.raw_events_except`: event names never written to `scarlett_beacon_events` while `store_raw_events` is on. `['heartbeat']` cuts the raw log to about a tenth and keeps `scarlett_views` exact, since every beacon still merges into its view; an excluded `error` still reaches `scarlett_view_errors`. Entries that are not strings are ignored.
+- Server-side beacon context: `beacons.context` names a `Contracts\ResolvesBeaconContext`, called by the beacon route with the request after validation and before the beacon is queued. Every key it returns is server-owned on that beacon: it is removed from the browser's custom dimensions, a non-null value is stored in the new `scarlett_views.server` map (merged per key, newest beacon winning, stamps in `server_stamps`), and `null` strips the browser's copy without storing anything. A `ProcessesBeacon` step can add server context too, with `BeaconPayload::withServer()`. Identity keys are refused with `InvalidBeaconContextException`.
+- `BeaconPayload::withServer()`, `browserArray()`, `$server` and `$owned`; `toArray()` puts the server context after the browser's keys.
+- The `beacon context` doctor check.
+- README recipes for server-side context: a tenant from the request, the user from a session and the Sanctum SPA (same origin only: the plugin's fetch beacons carry no cookie cross-origin), and a Bearer token through the plugin's `headers` option for an ingest on another origin.
+- `player.heartbeat_interval` (`SCARLETT_HEARTBEAT_INTERVAL`, seconds): the analytics plugin's heartbeat interval, passed to the player as `heartbeatInterval` in milliseconds. Null, the default, emits nothing and the player's own 10 s applies. Numeric strings are accepted; anything that is not a number above zero throws `InvalidPlayerConfigException`.
+- `PlayerConfigBuilder::heartbeatInterval()` and the component's `heartbeat-interval` attribute (seconds) override the setting for one player. The initialiser passes it to the analytics plugin, and a page-wide `window.scarlettPlayerOptions.analytics.heartbeatInterval` still wins. Module mode only: the 1.17.0 embed bundle has no attribute for it, so embed mode leaves a configured interval out and an explicit `heartbeatInterval()` throws `UnsupportedInEmbedMode` (feature matrix row `analytics_heartbeat`).
+- Embed mode carries clips, chapters and captions from player 1.17.0: `withClips()`, `withChapters()` and `withCaptions()` build there, and the embed renders `data-captions`, `data-chapters` (JSON, or the WebVTT URL given), `data-clips-endpoint`, `data-clips-csrf="meta"`, `data-clips-media-id`, `data-clips-min-duration` and `data-clips-max-duration`, in the same shapes as the module config. On an older `player.player_version` they still throw `UnsupportedInEmbedMode`. The protected-media clip policy applies in both modes.
+- `PlayerConfigBuilder::embedAddonUrls()`: the embed addon files a config needs (`embed.addon.chapters`, `embed.addon.clips`), in the bundle's directory and flavour. The Blade component loads them after the bundle, once per page. Embed clips need the host page's `csrf-token` meta tag; the package's embed page never enables clips.
+- `ClipStorageException`, thrown when the clip disk refuses a visibility write.
+
+### Fixed
+
+- A clip visibility write the disk refused counted as a success. On a disk configured `throw => false`, `setVisibility()` returns `false`: `reject()` marked the clip hidden while its object stayed public, and `scarlett:clips:reconcile` counted the object as re-synced. Every visibility write now treats `false` as a failure and throws `ClipStorageException`, naming the clip, disk and path. `reject()` throws before the row changes and fires no `ClipRejected`; `approve()` throws with the row public and the object private; a render still goes ready with a private object and reports the exception; `scarlett:clips:reconcile` reports each refused write and exits with a failure code. Making an object that no longer exists private is not a failure.
 
 ### Changed
 
-- CI runs on the pinned `ubuntu-24.04` runner image instead of `ubuntu-latest`, which GitHub is migrating to Ubuntu 26 from 2026-10-19.
+- The raw log's `event_key` hashes the beacon as the browser sent it, so neither server context nor a pipeline redaction moves it. A beacon no pipeline step changes keeps its 0.1.0 key; a beacon a step redacts gets a new key once across the upgrade. Beacon jobs queued by 0.1.0 still process.
+- `scarlett_views` gains two nullable json columns, `server` and `server_stamps`, in its create migration. A table migrated by 0.1.0 needs them added before `beacons.context` is set; without a resolver nothing reads or writes them.
+- `scarlett:clips:reconcile` exits with a failure code when the disk refuses a visibility write.
+- CI runs on the pinned `ubuntu-24.04` runner image instead of `ubuntu-latest`.
 
 ## [0.1.0] - 2026-09-27
 

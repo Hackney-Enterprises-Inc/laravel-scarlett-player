@@ -140,6 +140,8 @@ export function buildPlugins(config, options = {}) {
       isLive: config.analytics.isLive,
       ...(config.analytics.apiKey ? { apiKey: config.analytics.apiKey } : {}),
       ...(config.analytics.videoTitle ? { videoTitle: config.analytics.videoTitle } : {}),
+      // Milliseconds, from player.heartbeat_interval; a page-wide option below still wins.
+      ...(config.analytics.heartbeatInterval ? { heartbeatInterval: config.analytics.heartbeatInterval } : {}),
       ...(options.analytics || {}),
     };
     plugins.push(createAnalyticsPlugin(analytics));

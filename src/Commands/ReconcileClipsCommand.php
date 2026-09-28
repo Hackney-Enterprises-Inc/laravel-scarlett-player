@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Hei\ScarlettPlayer\Commands;
 
 use Hei\ScarlettPlayer\Enums\ClipStatus;
+use Hei\ScarlettPlayer\Exceptions\ClipStorageException;
 use Hei\ScarlettPlayer\Jobs\RenderClip;
 use Hei\ScarlettPlayer\Models\Clip;
 use Illuminate\Console\Command;
@@ -29,7 +30,7 @@ class ReconcileClipsCommand extends Command
     public function handle(): int
     {
         $deleted = $this->pruneRejected();
-        $resynced = $this->resyncVisibility((bool) $this->option('resync-all'));
+        [$resynced, $refused] = $this->resyncVisibility((bool) $this->option('resync-all'));
 
         if (! config('scarlett-player.clips.enabled', true)) {
             // While clips are off nothing is dispatched and no stuck render is retried;
@@ -37,7 +38,7 @@ class ReconcileClipsCommand extends Command
             // pass still run.
             $this->components->info("Clips are disabled (clips.enabled): nothing dispatched or retried, {$deleted} rejected assets deleted, {$resynced} objects re-synced.");
 
-            return self::SUCCESS;
+            return $this->visibilityOutcome($refused);
         }
 
         $dispatched = $this->dispatchPending();
@@ -48,7 +49,22 @@ class ReconcileClipsCommand extends Command
             $dispatched, $retried, $failed, $deleted, $resynced,
         ));
 
-        return self::SUCCESS;
+        return $this->visibilityOutcome($refused);
+    }
+
+    /**
+     * Fail the run when the disk refused a visibility write: the object and its row are
+     * still apart, and a scheduler or monitor watching the exit code should see it.
+     */
+    private function visibilityOutcome(int $refused): int
+    {
+        if ($refused === 0) {
+            return self::SUCCESS;
+        }
+
+        $this->components->error("{$refused} clip objects could not be re-synced: the disk refused the visibility write (each is reported). They are retried on the next run.");
+
+        return self::FAILURE;
     }
 
     private function dispatchPending(): int
@@ -127,30 +143,41 @@ class ReconcileClipsCommand extends Command
      * day): drift can only arise at moderation or render time, and both touch
      * updated_at, while a full pass would cost one billable storage call per clip every
      * minute. A host that suspects older drift runs the command with --resync-all.
+     *
+     * A write the disk refuses (false from a throw => false disk) is counted apart and
+     * never as re-synced.
+     *
+     * @return array{0: int, 1: int} Objects re-synced, and objects whose write the disk refused.
      */
-    private function resyncVisibility(bool $all = false): int
+    private function resyncVisibility(bool $all = false): array
     {
         if (config('scarlett-player.clips.public_delivery') !== 'disk-public') {
-            return 0;
+            return [0, 0];
         }
 
         $synced = 0;
+        $refused = 0;
 
         Clip::query()
             ->whereNotNull('path')
             ->when(! $all, fn ($query) => $query->where('updated_at', '>=', now()->subSeconds(self::RESYNC_WINDOW)))
             ->orderBy('id')
-            ->each(function (Clip $clip) use (&$synced): void {
+            ->each(function (Clip $clip) use (&$synced, &$refused): void {
                 try {
                     $clip->withModerationLock(fn () => $clip->syncAssetVisibility());
                     $synced++;
                 } catch (Throwable $e) {
-                    // Locked by a moderation in flight, or storage failing: next run.
+                    // Refused by the disk (counted, the run fails), locked by a moderation
+                    // in flight, or storage throwing: reported, retried next run.
+                    if ($e instanceof ClipStorageException) {
+                        $refused++;
+                    }
+
                     report($e);
                 }
             });
 
-        return $synced;
+        return [$synced, $refused];
     }
 
     private function pruneRejected(): int

@@ -37,6 +37,22 @@ Then check the installation:
 php artisan scarlett:doctor
 ```
 
+### Upgrading from 0.1
+
+- **Server-side context columns.** A `scarlett_views` table migrated by 0.1.0 needs two
+  nullable json columns, `server` and `server_stamps`, before you set `beacons.context`
+  (see [Server-side context](#server-side-context); the `beacon context` doctor check fails
+  until they exist). Without a resolver nothing reads or writes them, so a host that does
+  not use the hook needs no migration.
+- **`scarlett:clips:reconcile` can exit non-zero.** A clip visibility write the disk
+  refuses (including a `false` from a disk configured `throw => false`) is now reported and
+  fails the run instead of counting as re-synced. A scheduler or monitor that alerts on
+  failed commands will see it; the write is retried on the next run.
+- **One new event key for redacted beacons.** The raw log's `event_key` now hashes the
+  beacon as the browser sent it. A beacon that a `beacons.pipeline` step redacts therefore
+  gets a new key once across the upgrade: a v0.1.0 delivery and its v0.2.0 retry are stored
+  as two raw rows. Beacons no step changes keep their v0.1.0 key.
+
 ### Publish tags
 
 | Tag | What |
@@ -173,6 +189,7 @@ createAnalyticsPlugin({
   beaconUrl: 'https://app.example.com/api/scarlett/beacons', // must be https
   apiKey: '...',                                              // SCARLETT_BEACON_KEY
   videoId: 'the mediaId',
+  heartbeatInterval: 10000,                                   // optional, ms; player.heartbeat_interval (seconds) sets it
   customDimensions: { plan: 'ppv' },                          // optional, stored in custom
 });
 ```
@@ -272,7 +289,7 @@ php artisan migrate
 | Table | Rows | Pruned by |
 |---|---|---|
 | `scarlett_views` | one per `viewId`, merged from every beacon of that view | `retention.views` days since its last update |
-| `scarlett_beacon_events` | every beacon as received, while `store_raw_events` is on (about 90% heartbeats) | `retention.events` days since received |
+| `scarlett_beacon_events` | every beacon as received, while `store_raw_events` is on (about 90% heartbeats), except the event names in `raw_events_except` | `retention.events` days since received |
 | `scarlett_view_errors` | one per `error` beacon, with its `video_id` | with its view |
 
 Beacons arrive duplicated and out of order by design (keepalive fetch and `sendBeacon`
@@ -307,6 +324,172 @@ best effort; a beacons-only install with no `media.model` is never asked.
 relation on it. A `morphMany` from your model to `scarlett_views` must use a string local
 key on Postgres, which refuses to compare `varchar` with `integer`.
 
+### Server-side context
+
+Everything in a beacon comes from the browser, and anything the package does not know
+lands in `custom`, so a browser can send a custom dimension called `user_id` with any
+value. `custom` is what the browser sent; never trust it for who the viewer is. For the
+fields only your server knows (the signed-in user, the tenant), name a resolver in
+`beacons.context`:
+
+```php
+use Hei\ScarlettPlayer\Contracts\ResolvesBeaconContext;
+use Hei\ScarlettPlayer\Data\BeaconPayload;
+use Illuminate\Http\Request;
+
+final class BeaconContext implements ResolvesBeaconContext
+{
+    public function resolve(Request $request, BeaconPayload $payload): array
+    {
+        return ['user_id' => $request->user('web')?->getAuthIdentifier()];
+    }
+}
+```
+
+```php
+// config/scarlett-player.php
+'beacons' => [
+    'context' => App\Analytics\BeaconContext::class,
+],
+```
+
+Three rules:
+
+- **It runs at request time**, in the beacon route, after validation and before the
+  beacon is queued, because the queued job has no request. It runs for every beacon,
+  heartbeats included, so keep it cheap. The route has no `auth` middleware (guests
+  beacon too), so it must not throw for a guest. It is not wrapped: an exception is
+  reported by your handler, the beacon is answered `500` and lost, and so is every
+  beacon while it keeps throwing. `scarlett:beacon:test` posts through the route and
+  runs it.
+- **Every key it returns is server-owned on that beacon.** The key is removed from the
+  browser's custom dimensions, whatever the browser sent, and the value is stored under
+  `scarlett_views.server`. A name the player also uses (`duration`) is allowed, but it
+  lands only in `server` and the raw log, never in that name's own column. The six
+  identity keys (`event`, `timestamp`, `viewId`, `sessionId`, `viewerId`, `videoId`) are
+  refused with `InvalidBeaconContextException`.
+- **Null strips.** A key returned as `null` stores nothing but still removes the
+  browser's copy, so `['user_id' => $request->user()?->id]` means a guest's view has no
+  `user_id` from anywhere. A value stored by an earlier beacon of the view is never
+  deleted by a later null.
+
+`scarlett_views.server` is a JSON map beside `custom`, merged the same way: key by key,
+each key keeping the value from the newest beacon that sent it (`server_stamps`). Query it
+with Laravel's JSON paths; bind the value with the type your resolver returned:
+
+```php
+DB::table('scarlett_views')->where('server->tenant_id', 7)->get();
+```
+
+The raw log, `BeaconReceived`, `ViewStarted` and the fake's ledger see the server value
+under its name, after the browser's keys. The raw log's `event_key` hashes only what the
+browser sent, so the server context never makes two deliveries of one beacon look like
+two beacons. For an indexed column (a `tenant_id` you filter on), add it in your own
+migration and fill it from `ViewStarted`.
+
+A `ProcessesBeacon` step can add server context too, with `$payload->withServer()`, for
+anything that does not need the request.
+
+**Migrated with 0.1?** Add two nullable json columns, `server` and `server_stamps`, to
+`scarlett_views` before setting `beacons.context` (the `beacon context` doctor check fails
+until you do; without a resolver nothing touches them).
+
+#### Recipe: tenant from the request
+
+No middleware needed: the host, or a header your edge sets, is on every request.
+
+```php
+public function resolve(Request $request, BeaconPayload $payload): array
+{
+    return ['tenant_id' => Tenant::idForHost($request->getHost())];
+}
+```
+
+#### Recipe: the signed-in user, from the session
+
+The beacon route runs in the `api` group, which has no session. Append the cookie and
+session middleware to the beacon group, then read the `web` guard:
+
+```php
+'routes' => [
+    'middleware' => [
+        'beacons' => [
+            'api',
+            'throttle:scarlett-beacons',
+            \Illuminate\Cookie\Middleware\EncryptCookies::class,
+            \Illuminate\Session\Middleware\StartSession::class,
+        ],
+    ],
+],
+```
+
+```php
+return ['user_id' => $request->user('web')?->getAuthIdentifier()];
+```
+
+Never add `auth` (guests beacon too, and a `401` loses the view) or the CSRF middleware
+(the unload `sendBeacon` cannot send a token).
+
+**Same origin only.** The plugin sends every beacon except the unload `viewEnd` with
+`fetch`, and sets no `credentials` option, so the browser attaches cookies only when the
+ingest is on the page's own origin. With the page and the ingest on one origin, every
+beacon carries the session. With the ingest on another origin (another subdomain
+included, whatever the cookie's domain), in-session beacons arrive as guests; only the
+unload `sendBeacon`, which always sends credentials, carries the session cookie, so a
+view gets its `user_id` from that one beacon, or never when it is lost. For an ingest on
+another origin, use the token recipe below.
+
+#### Recipe: Sanctum SPA
+
+```php
+'beacons' => [
+    'api',
+    \Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class,
+    'throttle:scarlett-beacons',
+],
+```
+
+```php
+return ['user_id' => $request->user('sanctum')?->getAuthIdentifier()];
+```
+
+The session rides the cookie, so this too is same origin only, for the reason above.
+`EnsureFrontendRequestsAreStateful` adds Laravel's CSRF check to every request from a
+stateful domain, and neither beacon transport sends a token, so beacons from your SPA are
+answered `419` (Laravel 13 lets a same-origin request through on `Sec-Fetch-Site`; a
+cross-origin ingest, and Laravel 12, do not). Exempt the beacon path, in
+`bootstrap/app.php`:
+
+```php
+->withMiddleware(function (Middleware $middleware): void {
+    $middleware->validateCsrfTokens(except: ['api/scarlett/beacons']);
+})
+```
+
+#### Recipe: a token, for an ingest on another origin
+
+Keep the default beacon middleware and read the `sanctum` guard, which accepts a Bearer
+token with no session or stateful middleware:
+
+```php
+return ['user_id' => $request->user('sanctum')?->getAuthIdentifier()];
+```
+
+Give the page a token and pass it through the plugin's `headers` option (merged over
+`Content-Type` and `X-API-Key` on every fetch beacon), and add `Authorization` to
+`allowed_headers` in `config/cors.php`:
+
+```js
+window.scarlettPlayerOptions = {
+  analytics: { headers: { Authorization: `Bearer ${token}` } },
+};
+```
+
+The token is readable by any script on the page, so issue one that is short-lived and
+limited to this purpose (`$user->createToken('beacons', ['beacons'], now()->addHours(2))`).
+The unload `viewEnd` goes out through `sendBeacon`, which carries no headers, so it is
+always a guest; a guest beacon's `null` never deletes the `user_id` the view already has.
+
 ### Your own store
 
 `beacons.store` takes `eloquent`, `null` (accept and discard), or the class name of your
@@ -334,8 +517,9 @@ persistent, therefore not automatically anonymous.
 - `beacons.anonymize_ip` (default `true`): the address is truncated (IPv4 last octet, IPv6
   last 64 bits) before the job is queued, so a full address never reaches the queue.
 - `beacons.pipeline`: classes implementing `Contracts\ProcessesBeacon`, run in order
-  before storage. A step can redact (`$payload->withCustom()`, `->withIp()`) or return
-  `null` to drop the beacon. What a step returns is what the raw log, the store and
+  before storage. A step can redact (`$payload->withCustom()`, `->withIp()`), replace the
+  server context (`->withServer()`, see Server-side context) or return `null` to drop the
+  beacon. What a step returns is what the raw log, the store and
   `BeaconReceived` see.
 
 ```php
@@ -348,6 +532,10 @@ final class DropEmail implements ProcessesBeacon
 }
 ```
 
+- `beacons.raw_events_except` (default `[]`): event names never written to
+  `scarlett_beacon_events`. `['heartbeat']` cuts the raw log to about a tenth and loses
+  only the per-heartbeat trail: every beacon still merges into its `scarlett_views` row,
+  and an excluded `error` still reaches `scarlett_view_errors`.
 - `beacons.retention`: days per table, `['events' => 90, 'views' => 365]`; `null` keeps
   a table forever. `scarlett:views:prune` applies it and runs daily from your scheduler
   while `beacons.schedule_prune` is on. `scarlett_view_errors` follows `retention.views`.
@@ -618,7 +806,10 @@ Assets are written **private**, always, at `{clips.path}/{uuid}.mp4` on `clips.d
   effect at once. Moderation and the object's visibility change together under a per-clip
   cache lock (`clips.lock_wait` seconds of waiting), so use a cache store with locks
   (redis, database, file); a moderation that cannot get the lock throws
-  `LockTimeoutException` and can be retried.
+  `LockTimeoutException` and can be retried. A visibility write the disk refuses throws
+  `ClipStorageException`, including a `false` from a disk configured `throw => false`:
+  `reject()` then leaves the row untouched, and `scarlett:clips:reconcile` reports the
+  clip and exits with a failure code until a retry lands.
 - `ready` and not public: no playback URL. The status response carries a `previewUrl`
   (a temporary signed route, valid for `clips.preview_ttl` seconds) for viewers who pass
   `preview`: the submitter while the clip waits for review, or a moderator.
@@ -744,16 +935,19 @@ attribute. What each mode can carry:
 | brand colour / brand text colour | yes | yes; `data-brand-color`, `data-brand-text-color` |
 | analytics (beaconUrl, videoId, apiKey) | yes; plus `headers()` in the initialiser | yes; `data-analytics-*`, no extra headers |
 | analytics live flag (isLive from the MediaSource) | yes; the initialiser passes it to the analytics plugin, so viewStart is right before the playlist loads | **no**; the embed has no attribute for it, so viewStart reports the player state (false until the playlist loads) |
+| analytics heartbeat interval (`player.heartbeat_interval`) | yes | **no**; no `data-analytics-heartbeat-interval` attribute; the player default applies |
 | share URL + embed base URL | yes | yes; `data-share-url`, `data-embed-base-url` |
-| clips (endpoint, CSRF header) | yes | **no**; until the embed ships `data-clips-endpoint` + `data-clips-csrf="meta"` |
-| chapters | yes | **no**; until the embed ships `data-chapters` |
-| captions | yes | **no**; until the embed ships `data-captions` |
+| clips (endpoint, CSRF header) | yes | yes, from player 1.17.0; `data-clips-endpoint`, `data-clips-csrf="meta"`, `data-clips-media-id`, `data-clips-min-duration`, `data-clips-max-duration`, with the `embed.addon.clips` addon; the host page needs its `csrf-token` meta tag |
+| chapters | yes | yes, from player 1.17.0; `data-chapters` (JSON or a WebVTT URL), with the `embed.addon.chapters` addon |
+| captions | yes | yes, from player 1.17.0; `data-captions`, no addon |
 <!-- feature-matrix:end -->
 
 This table is generated from `Hei\ScarlettPlayer\Player\FeatureMatrix`, the same table the
-builder enforces (`FeatureMatrix::toMarkdown()`; a test fails if the two differ). Asking for
-clips, chapters or captions in embed mode throws `UnsupportedInEmbedMode`, which names the
-module-mode alternative.
+builder enforces (`FeatureMatrix::toMarkdown()`; a test fails if the two differ). A cell
+reading "from player X" is checked against `player.player_version`: below it, asking for that
+feature in embed mode throws `UnsupportedInEmbedMode`, which names the module-mode
+alternative. On the pinned 1.17.0, embed mode carries clips, chapters and captions; chapters
+and clips need the embed's addon files, which the component loads for you.
 
 ### Config builder
 
@@ -765,6 +959,7 @@ $config = ScarlettPlayer::for($video)          // ScarlettMedia model, media id,
     ->autoplay()->muted()
     ->brandColor($tenant->brand_color)
     ->withAnalytics()                           // beaconUrl, videoId and apiKey from the package route and config
+    ->heartbeatInterval(5)                      // seconds; overrides player.heartbeat_interval (module mode only)
     ->withClips()                               // endpoint from the package route; csrf: true
     ->withChapters($video->chapters)            // [['time' => 0, 'label' => 'Intro', 'endTime' => 95], ...] or a WebVTT URL
     ->withCaptions($video->captionTracks)       // [['language' => 'en', 'label' => 'English', 'src' => '...'], ...]
@@ -782,6 +977,14 @@ optional `kind` (`subtitles` or `captions`) and `default`.
 your `MediaSource`. `withAnalytics()` also passes `MediaSource::$isLive` to the analytics plugin,
 because the player's own `viewStart` reports `isLive: false` until the playlist has loaded;
 the embed bundle has no attribute for it (see the matrix). `withAnalytics()` and `withClips()` throw if their routes are switched off.
+
+The heartbeat interval is `player.heartbeat_interval` (`SCARLETT_HEARTBEAT_INTERVAL`), in
+seconds; `heartbeatInterval()` overrides it for one player, and null goes back to the config
+value. The analytics block then carries `heartbeatInterval` in milliseconds, which is what the
+plugin takes (`2.5` becomes `2500`). Unset, nothing is emitted and the player's own 10 s
+applies. Anything that is not a number above zero throws `InvalidPlayerConfigException`. The
+embed bundle has no attribute for it: in embed mode a configured interval is left out and the
+page still renders, while calling `heartbeatInterval()` throws `UnsupportedInEmbedMode`.
 `withClips()` also refuses protected media until you register your own policy for
 `Hei\ScarlettPlayer\Models\Clip`, and that policy must declare its own `create()`. The
 package's default policy does not count, and neither does a subclass that inherits its
@@ -851,8 +1054,8 @@ For one player that needs its own options, render it with `manual`
 ```
 
 Attributes: `media` (required), `mode`, `autoplay`, `muted`, `loop`, `controls`, `start-time`,
-`poster`, `title`, `brand-color`, `brand-text-color`, `analytics`, `clips`, `chapters`,
-`captions`, `share-url`, `share-embed`, `player-id`, `manual` and `nonce` (for a CSP). Any other
+`poster`, `title`, `brand-color`, `brand-text-color`, `analytics`, `heartbeat-interval`
+(seconds, module mode), `clips`, `chapters`, `captions`, `share-url`, `share-embed`, `player-id`, `manual` and `nonce` (for a CSP). Any other
 attribute, such as `class`, goes on the container.
 
 - **Module mode** renders the container, the host config in a `<script type="application/json">`
@@ -866,6 +1069,18 @@ attribute, such as `class`, goes on the container.
   ending in `.cjs` (the UMD build) is loaded as a classic script. For a floating version set
   `SCARLETT_EMBED_BUNDLE='{cdn_url}/latest/embed.js'`, once the CDN serves `/latest/` (it
   serves versioned directories only today).
+- **Embed addons.** With `:chapters` or `clips`, the component also loads
+  `embed.addon.chapters.js` and `embed.addon.clips.js` after the bundle. They come from the
+  bundle's own directory, in its flavour (`.umd.cjs` beside a `.cjs` bundle), and each is
+  loaded once per page. `embedAddonUrls()` on the builder lists them if you write the tags
+  yourself. Keep the addons in the same version directory as the bundle: an addon refuses
+  an embed of another version. Captions need no addon.
+- **Embed clips** post to the clips route with the page's cookies and `X-CSRF-TOKEN` from
+  the page's `<meta name="csrf-token">` (the component emits `data-clips-csrf="meta"`, the
+  opt-in the embed requires). So they work on your own pages, under the same recipes as
+  module mode (see Clips), with the meta tag present. They cannot work on the package's
+  embed page, which runs cross-origin in someone else's iframe with no session, so that
+  page never enables clips.
 
 `<x-scarlett::player>` is the same component.
 
@@ -878,7 +1093,9 @@ empty; each domain also allows its subdomains). The brand colour comes from
 `MediaSource::$meta['brand_color']` and `['brand_text_color']`. When beacons are on, their
 route is registered and `beacons.key` is set, the page also beacons through the analytics
 plugin (`data-analytics-*`): an embed iframe beaconing cross-origin is exactly the case the
-CORS recipe under Beacons exists for. Publish the view with `--tag=scarlett-views`.
+CORS recipe under Beacons exists for. It never enables clips: in someone else's iframe there
+is no session and no CSRF meta tag of yours to send. It carries no chapters or captions either,
+since the `MediaSource` has no field for them. Publish the view with `--tag=scarlett-views`.
 
 `embed.allowed_domains` takes bare host names (`example.com`, which also allows its
 subdomains). A scheme, port, path or leading `*.` is stripped, and anything that is still not
@@ -942,8 +1159,11 @@ write all the same).
 | `ProcessBeacon` | `beacons.queue` | the beacon payload | 30 s | 5, backoff 5 s, 30 s, 120 s |
 | `RenderClip` | `clips.queue` | the clip id only | generator timeout + 30 s | `clips.max_attempts` (3) |
 
-Beacon jobs are small and plentiful: the analytics plugin sends a heartbeat every 10 s per
-viewer. Clip jobs are few, CPU-heavy and slow.
+Beacon jobs are small and plentiful: the analytics plugin sends a heartbeat every
+`player.heartbeat_interval` seconds per viewer, 10 by default. Each player sends 60 / interval
+heartbeats a minute against the `scarlett-beacons` limit (`beacons.throttle`, `600,1` per IP):
+a 2 s interval is 30 a minute per player, so a page with several players, or many viewers
+behind one NAT, needs a higher limit. Clip jobs are few, CPU-heavy and slow.
 
 ### Timeouts: the 330-second arithmetic
 
@@ -1049,6 +1269,7 @@ Prints one row per check and exits non-zero when any check fails (warnings alone
 | embed bundle | `player.mode` is `embed` and the bundle URL cannot be built (fail), or only the embed page would need it (warn) |
 | embed domains | an `embed.allowed_domains` entry is not a host name (fail; otherwise every embed page request fails) |
 | beacon ip column | `beacons.store_ip` is on but `scarlett_views.ip_address` does not exist, because it is created only when `store_ip` was on at migrate time (fail); the table is missing or cannot be inspected (warn) |
+| beacon context | `beacons.context` is set but is not a class implementing `ResolvesBeaconContext`, or `scarlett_views.server` does not exist, on a table migrated by 0.1 (fail); the table is missing or cannot be inspected (warn) |
 | beacon route | `routes.beacons` is on but `scarlett.beacons.store` is not registered, e.g. a stale route cache (fail); the route is registered while `beacons.enabled` is off (warn) |
 | beacon cors | beacons are on and the CORS config would lose the unload beacon: the path is missing, `supports_credentials` is off, `*` origins with credentials, or `X-API-Key` not allowed (warn) |
 | beacon queue | beacons and clips share one queue on one connection (warn) |
@@ -1088,6 +1309,7 @@ falls through to the bound resolver.
 | Package | Player wire contracts (`@scarlett-player/*`) | Wire fixture set | Notes |
 |---|---|---|---|
 | `v0.1.0` | 1.17.x, pinned at 1.17.0 (`player.player_version`) | `tests/Fixtures/wire/1.17.0/`, captured | Captured by the player repo's harness against the `v1.17.0` checkout (21 fixtures, a 34-beacon session sequence, 12 harness assertions passing); the browser test runs the npm 1.17.0 embed bundle |
+| `v0.2.0` | 1.17.x, pinned at 1.17.0 (`player.player_version`) | `tests/Fixtures/wire/1.17.0/`, captured | The same captured fixture set as `v0.1.0`, unchanged. Embed mode now carries chapters, captions and clips on 1.17.0, with the `embed.addon.chapters` and `embed.addon.clips` addon files beside the bundle |
 
 Two contract rules keep the package and the player from drifting:
 
