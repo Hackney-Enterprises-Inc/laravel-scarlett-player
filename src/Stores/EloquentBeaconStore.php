@@ -160,6 +160,9 @@ class EloquentBeaconStore implements BeaconStore
     /** Whether scarlett_views has the ip_address column, checked once per store. */
     private ?bool $ipColumn = null;
 
+    /** Whether the published raw events table has seq, checked once per store. */
+    private ?bool $seqColumn = null;
+
     public function __construct(
         private readonly ConnectionResolverInterface $database,
         private readonly Repository $config,
@@ -170,6 +173,13 @@ class EloquentBeaconStore implements BeaconStore
     public function record(BeaconPayload $payload): void
     {
         $connection = $this->connection();
+
+        // Inspect before the transaction: SQLite must still WRITE first inside it
+        // to acquire its lock without a read-to-write upgrade. Published older
+        // migrations lack seq; keep ingesting until the host adds the column.
+        if ($this->config->get('scarlett-player.beacons.store_raw_events') && ! $this->rawEventExcluded($payload->event)) {
+            $this->seqColumn ??= $connection->getSchemaBuilder()->hasColumn(self::EVENTS, 'seq');
+        }
 
         /** @var list<object> $fired */
         $fired = $connection->transaction(fn (): array => $this->write($connection, $payload), 3);
@@ -217,14 +227,26 @@ class EloquentBeaconStore implements BeaconStore
             && $connection->table(self::VIEWS)->where('view_id', $payload->viewId)->lockForUpdate()->first(['id']) !== null;
 
         if ($this->config->get('scarlett-player.beacons.store_raw_events') && ! $this->rawEventExcluded($payload->event)) {
-            $connection->table(self::EVENTS)->insertOrIgnore([
+            $row = [
                 'view_id' => $payload->viewId,
                 'event' => $payload->event,
                 'event_key' => $key,
                 'occurred_at' => self::clientTime($payload->timestamp),
                 'payload' => json_encode($payload->toArray(), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
                 'received_at' => $now,
-            ]);
+            ];
+
+            $seq = $payload->get('beaconSeq');
+
+            if ($this->seqColumn === true && (is_int($seq) || is_float($seq))) {
+                $seq = $this->rawSequence($seq);
+
+                if ($seq !== null) {
+                    $row['seq'] = $seq;
+                }
+            }
+
+            $connection->table(self::EVENTS)->insertOrIgnore($row);
         }
 
         if ($payload->event === 'error' && $this->insertError($connection, $payload, $key, $now)) {
@@ -688,6 +710,23 @@ class EloquentBeaconStore implements BeaconStore
         $seconds = intdiv($milliseconds, 1000);
 
         return gmdate('Y-m-d H:i:s', $seconds).'.'.str_pad((string) ($milliseconds % 1000), 3, '0', STR_PAD_LEFT);
+    }
+
+    /**
+     * Use the portable SQL integer range: PostgreSQL has a signed integer even
+     * for unsignedInteger migrations. Omit unusable order keys without changing
+     * the raw payload or dropping the beacon's view metrics. Bound before casting
+     * so a large finite value cannot wrap into a valid-looking sequence number.
+     */
+    private function rawSequence(int|float $value): ?int
+    {
+        if (! is_finite($value)) {
+            return null;
+        }
+
+        $rounded = max(0, round($value, 0, PHP_ROUND_HALF_UP));
+
+        return $rounded > 2147483647 ? null : (int) $rounded;
     }
 
     private function whole(int|float $value): int

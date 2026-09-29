@@ -150,6 +150,7 @@ it('answers every captured beacon 204 on its own transport and stores it', funct
 
     expect(DB::table('scarlett_beacon_events')->where('event', $json['fixture']['event'])->count())->toBe(1)
         ->and(DB::table('scarlett_views')->where('view_id', $json['request']['body']['viewId'])->exists())->toBeTrue();
+    expect(DB::table('scarlett_beacon_events')->sole()->seq)->toBeNull();
 })->with(fn (): array => array_keys(wireBeacons()));
 
 it('carries the key only where the harness recorded it: the header on fetch, the query on sendBeacon', function (): void {
@@ -300,4 +301,50 @@ it('merges the captured full session into one view, the same whichever order it 
     expect($reversed)->toEqual($inOrder)
         ->and((int) $inOrder['watch_ms'])->toBeGreaterThan(0)
         ->and(DB::table('scarlett_beacon_events')->count())->toBe(26);
+});
+
+it('replays the derived player 1.19.3 beacons with order keys and seeking sources outside custom', function (): void {
+    $directory = dirname(__DIR__, 2).'/Fixtures/wire/1.19.3';
+    $files = glob($directory.'/*.json') ?: [];
+    $beacons = [];
+
+    foreach ($files as $path) {
+        $json = json_decode((string) file_get_contents($path), true, 512, JSON_THROW_ON_ERROR);
+        if (isset($json['request']['body']['event'])) {
+            $beacons[basename($path)] = $json;
+        }
+    }
+
+    expect(count($beacons))->toBeGreaterThanOrEqual(2);
+    $provenance = (string) file_get_contents($directory.'/PROVENANCE.md');
+    $events = [];
+
+    foreach ($beacons as $file => $json) {
+        $body = $json['request']['body'];
+        $events[] = $body['event'];
+        expect($provenance)->toMatch('/^\| `'.preg_quote($file, '/').'` \|.*derived \(recapture owed\).*\|$/m')
+            ->and($body['playerVersion'])->toBe('1.19.3')
+            ->and($body['beaconSeq'])->toBeInt()->toBeGreaterThan(0);
+
+        replayWire($this, $json['request'])->assertNoContent();
+
+        $row = DB::table('scarlett_beacon_events')->where('view_id', $body['viewId'])->where('event', $body['event'])->where('seq', $body['beaconSeq'])->sole();
+        $payload = BeaconPayload::fromArray($body);
+        $custom = json_decode((string) DB::table('scarlett_views')->where('view_id', $body['viewId'])->sole()->custom, true) ?? [];
+        $raw = json_decode($row->payload, true);
+
+        expect((int) $row->seq)->toBe($body['beaconSeq'])
+            ->and($payload->fields['beaconSeq'])->toBe($body['beaconSeq'])
+            ->and($custom)->not->toHaveKeys(['beaconSeq', 'seekSource'])
+            ->and($raw['beaconSeq'])->toBe($body['beaconSeq']);
+
+        if ($body['event'] === 'seeking') {
+            expect($body['seekSource'])->toBeIn(['player', 'element'])
+                ->and($payload->fields['seekSource'])->toBe($body['seekSource'])
+                ->and($raw['seekSource'])->toBe($body['seekSource']);
+        }
+    }
+
+    expect($events)->toContain('seeking')
+        ->and(count(array_unique($events)))->toBeGreaterThanOrEqual(2);
 });

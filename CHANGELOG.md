@@ -4,6 +4,26 @@ All notable changes to `hei/laravel-scarlett-player` are documented here. The fo
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Nullable unsigned `scarlett_beacon_events.seq` and the composite index `(view_id, occurred_at, seq)` in the fresh-install create migration, keeping the existing `view_id` index. Read a view's raw events by `occurred_at, seq, id`, never arrival id alone.
+- The `beacon seq column` doctor check: passes with raw-event storage off or the column present, and warns when the column is missing, with the two schema lines to add it.
+- README sections "Reading the raw log" (ordering query, sequence gaps and older-player NULLs) and "Upgrading from 0.2" (host-owned column/index migration, known-field change and ingest-before-player deployment order).
+- Derived 1.19.3 request-envelope fixtures for `viewStart` and both `seeking` sources, explicitly marked `derived (recapture owed)`. The captured 1.19.1 set remains intact.
+
+### Changed
+
+- Numeric `beaconSeq` and string `seekSource` are known beacon fields, no longer host custom dimensions. Wrong types still fall back to `custom`; null remains absent. A finite `beaconSeq` writes raw `seq` rounded half-away from zero and clamped at zero, only within the portable range 0 through 2147483647 and when the column exists; unusable order keys are omitted from SQL. The store tolerates older published schemas without the column. `seekSource` stays in the raw payload, and neither field changes the view-row merge. Existing raw rows and stale custom keys are not backfilled or rewritten.
+- Compatibility notes for player 1.19.3: `rebuffer_count` drops sharply, mostly on Safari, because `waiting` under the default 250 ms `rebufferGraceMs` no longer counts. `rebufferStart` is sent about 250 ms after the stall began (its timestamp is not backdated), while `rebuffer_ms` includes time from the first `waiting`; `rebufferGraceMs: 0` restores immediate counting. `seek_count` and `seeking` rows rise because progress-bar, keyboard, replay and native-control seeks were not sent before 1.19.3. Both are breaks in continuity across the player upgrade, not ingest bugs.
+- The player pin remains 1.19.1. Repinning to 1.19.3 and recapturing fixtures are follow-up work once the player is published on npm and the CDN; deploy package 0.3.0 and add the raw-log column before upgrading the host's player packages.
+
+### Fixed
+
+- Oversized raw sequence values could abort PostgreSQL ingest and its view aggregation, or be silently clamped by MySQL. SQL `seq` now uses the portable range 0 through 2147483647: round half-away from zero, clamp negatives to zero, and omit the SQL key if the rounded value exceeds the maximum or is non-finite. Finite original values remain in the raw payload and aggregation continues; omitted keys leave `seq` NULL on the package schema, as with older players. No migration or column-capacity change is required. The existing non-finite JSON encoding limitation is outside this fix.
+- Promoting `beaconSeq` and `seekSource` from custom dimensions could change deduplication hashes for the same request across the 0.2.1 upgrade. The hash basis preserves 0.2.1 normalization independently of current field classification, including the promoted keys' original interleaving with custom keys, rather than sorting keys or appending the promoted fields to custom. Stored hashes on queued payloads remain authoritative. Identical requests retain their raw/error event keys without a duplicate `PlaybackErrorReported` side effect solely from field promotion.
+
 ## [0.2.1] - 2026-09-28
 
 ### Changed

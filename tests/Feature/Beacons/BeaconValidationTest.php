@@ -160,3 +160,22 @@ it('accepts isLive null on a viewStart as absent, never a 422 and never a custom
     Queue::assertPushed(ProcessBeacon::class, fn (ProcessBeacon $job): bool => ! $job->payload->has('isLive')
         && ! array_key_exists('isLive', $job->payload->custom));
 });
+
+it('queues player 1.19.3 order and seek fields separately from host dimensions', function (): void {
+    sendBeaconBody($this, Beacons::body('seeking', 0, [
+        'beaconSeq' => 3, 'seekSource' => 'element', 'campaign' => 'spring',
+    ]))->assertNoContent();
+
+    Queue::assertPushed(ProcessBeacon::class, fn (ProcessBeacon $job): bool => $job->payload->fields === [
+        'beaconSeq' => 3, 'seekSource' => 'element',
+    ] && $job->payload->custom === ['campaign' => 'spring']);
+});
+
+it('accepts wrong-type player 1.19.3 fields as custom dimensions over HTTP', function (): void {
+    sendBeaconBody($this, Beacons::body('seeking', 0, [
+        'beaconSeq' => '3', 'seekSource' => 7, 'campaign' => 'spring',
+    ]))->assertNoContent();
+
+    Queue::assertPushed(ProcessBeacon::class, fn (ProcessBeacon $job): bool => $job->payload->fields === []
+        && $job->payload->custom === ['beaconSeq' => '3', 'seekSource' => 7, 'campaign' => 'spring']);
+});

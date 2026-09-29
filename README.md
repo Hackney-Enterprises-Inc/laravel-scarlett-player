@@ -54,6 +54,60 @@ php artisan scarlett:doctor
   gets a new key once across the upgrade: a v0.1.0 delivery and its v0.2.0 retry are stored
   as two raw rows. Beacons no step changes keep their v0.1.0 key.
 
+### Upgrading from 0.2
+
+**Add the raw-log order column.** Fresh installs get nullable `seq` and its composite
+index from the package's create migration. If you already published and ran the 0.2
+migration, add these two schema lines in a new, host-owned migration:
+
+```php
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+Schema::table('scarlett_beacon_events', function (Blueprint $table): void {
+    $table->unsignedInteger('seq')->nullable();
+    $table->index(['view_id', 'occurred_at', 'seq']);
+});
+```
+
+Keep the existing `view_id` index. There is no new package migration to publish for an
+existing table, and republishing an already-run create migration does not alter it.
+The store tolerates a missing `seq` column and continues ingesting, but cannot write the
+dedicated order key until you add it. `scarlett:doctor` warns under `beacon seq column`
+when raw-event storage is on and the column is missing; it passes when the column exists
+or `beacons.store_raw_events` is off. Restart long-running queue workers after migrating,
+since the column check is cached per store instance.
+
+**Two keys stop being custom dimensions.** Numeric `beaconSeq` and string `seekSource`
+are now known fields. The player sends `beaconSeq` on every beacon and `seekSource`
+(`player` or `element`) on `seeking`, from 1.19.3. Neither adds a view-row metric;
+`beaconSeq` supplies raw `seq`, and both remain in the raw payload. Wrong types still
+fall back to `custom`, and null is absent. If you deployed player 1.19.3 first, ignore
+any old `beaconSeq` / `seekSource` keys already in `scarlett_views.custom`: this upgrade
+does not remove them or backfill or reorder old raw rows. The view-row merge is unchanged.
+
+**Deduplication stays compatible with 0.2.1.** Promoting these two keys does not change
+the normalized browser-payload basis used for `bodyHash` and `event_key`. For hashing,
+they retain their original interleaving with custom keys under the 0.2.1 classification,
+independently of their new known-field classification for storage. Existing queued
+payloads retain their stored hashes. Replaying the same request accepted by 0.2.1 must
+not create a second raw row or error row, or repeat `PlaybackErrorReported`, solely
+because these keys became known. This is not a new sorted-key or raw-JSON-byte hash.
+
+The portable SQL `seq` range is **0 through 2147483647**, even on engines that could
+store larger integers. Overflow omits the SQL key rather than rejecting the beacon or
+clamping to the maximum; the finite original value stays in the raw payload and view
+aggregation continues. See [Reading the raw log](#reading-the-raw-log) for rounding
+and NULL behavior. This bound requires no migration change beyond the column/index
+recipe above.
+
+**Deploy the ingest first.** For tsp-web (and other existing hosts): run
+`composer update hei/laravel-scarlett-player` to 0.3.0, add the column and index, deploy
+the ingest, then move the host's `@scarlett-player/*` packages to 1.19.3. The package's
+`player.player_version` stays **1.19.1** in this release; repinning to 1.19.3 and
+recapturing fixtures follow once that player release is on npm and the CDN. See
+[Compatibility](#compatibility) for the count changes to expect from player 1.19.3.
+
 ### Publish tags
 
 | Tag | What |
@@ -325,6 +379,40 @@ best effort; a beacons-only install with no `media.model` is never asked.
 relation on it. A `morphMany` from your model to `scarlett_views` must use a string local
 key on Postgres, which refuses to compare `varchar` with `integer`.
 
+#### Reading the raw log
+
+Order a view's events by `occurred_at, seq, id`, never by `id` alone. The id records
+insertion by the queue worker, not playback order; keepalive requests can arrive in the
+opposite order, even when the player's timestamps share a millisecond.
+
+```sql
+SELECT * FROM scarlett_beacon_events
+WHERE view_id = ? ORDER BY occurred_at, seq, id;
+```
+
+`seq` is the player's per-view `beaconSeq` (1.19.3+), starting at 1 on each `viewStart`.
+Sampling does not consume numbers. A gap means a beacon never reached the stored log
+(for example, lost in transport or dropped by a pipeline), or an event was excluded by
+`beacons.raw_events_except`. With `['heartbeat']` excluded, gaps at heartbeat positions
+are expected and do not mean the view totals are missing those heartbeats.
+
+Rows from players before 1.19.3 have `seq` NULL and order by time only; `id` is just a
+deterministic tie-breaker and cannot recover their true order within one millisecond.
+For a finite numeric `beaconSeq`, storage rounds to the nearest integer, with halves
+away from zero, then clamps negative results to zero. The supported SQL range is
+**0 through 2147483647**, portable across SQLite, MySQL and PostgreSQL. A rounded
+value above 2147483647 omits `seq` from the SQL insert instead of binding an oversized
+integer or clamping to the maximum. For example, 2147483647.4 stores 2147483647,
+while 2147483647.5 leaves SQL `seq` NULL. The original finite `beaconSeq` stays in
+the raw payload and aggregation continues unchanged.
+
+An absent, null, wrong-typed or out-of-range value leaves `seq` NULL on the package
+schema. Thus NULL does not necessarily mean an old player: it can also mean an unusable
+order key, which cannot break timestamp ties. Non-finite numbers likewise must not be
+bound to SQL `seq`; this does not add support for non-finite JSON values or change the
+existing JSON encoding limitation. `seekSource` stays in the raw `payload` on `seeking`,
+not in a new view column. Neither field changes the view-row aggregation rules above.
+
 ### Playlists
 
 From player 1.19 every playlist track is its own view: a track change (and `setVideo()`
@@ -578,7 +666,8 @@ answered `204`. The beacons are real (queued and stored under a view id starting
 browser CORS.
 
 `scarlett:doctor` adds, for beacons: the key, the store binding, the route, the CORS
-recipe, the beacon queue (warns when it shares a queue with clips) and the IP column.
+recipe, the beacon queue (warns when it shares a queue with clips), the IP column,
+server-side context and the raw-log `seq` column.
 
 ### Testing against beacons
 
@@ -598,7 +687,10 @@ Bind `FakeBeaconStore` yourself for `assertRecorded()`, `assertRecordedCount()` 
 `assertNothingRecorded()` on `BeaconPayload` objects. The player's wire fixtures for
 1.19.1 are under `tests/Fixtures/wire/1.19.1/`, captured from the real transports by the
 player repo's harness: every beacon event per transport, the three `viewEnd` variants, a
-live session and a clip create and retry.
+live session and a clip create and retry. Additive 1.19.3 request envelopes under
+`tests/Fixtures/wire/1.19.3/` cover `viewStart` with `beaconSeq` and both `seeking`
+sources. These are **derived (recapture owed)** from the player source, not captured
+transports; they do not replace the captured 1.19.1 set or change the player pin.
 
 ## Clips
 
@@ -1288,6 +1380,7 @@ Prints one row per check and exits non-zero when any check fails (warnings alone
 | embed bundle | `player.mode` is `embed` and the bundle URL cannot be built (fail), or only the embed page would need it (warn) |
 | embed domains | an `embed.allowed_domains` entry is not a host name (fail; otherwise every embed page request fails) |
 | beacon ip column | `beacons.store_ip` is on but `scarlett_views.ip_address` does not exist, because it is created only when `store_ip` was on at migrate time (fail); the table is missing or cannot be inspected (warn) |
+| beacon seq column | raw-event storage is on but `scarlett_beacon_events.seq` is missing, or the table cannot be inspected (warn); passes when the column exists or `beacons.store_raw_events` is off |
 | beacon context | `beacons.context` is set but is not a class implementing `ResolvesBeaconContext`, or `scarlett_views.server` does not exist, on a table migrated by 0.1 (fail); the table is missing or cannot be inspected (warn) |
 | beacon route | `routes.beacons` is on but `scarlett.beacons.store` is not registered, e.g. a stale route cache (fail); the route is registered while `beacons.enabled` is off (warn) |
 | beacon cors | beacons are on and the CORS config would lose the unload beacon: the path is missing, `supports_credentials` is off, `*` origins with credentials, or `X-API-Key` not allowed (warn) |
@@ -1330,6 +1423,12 @@ falls through to the bound resolver.
 | `v0.1.0` | 1.17.x, pinned at 1.17.0 (`player.player_version`) | `tests/Fixtures/wire/1.17.0/`, captured | Captured by the player repo's harness against the `v1.17.0` checkout (21 fixtures, a 34-beacon session sequence, 12 harness assertions passing); the browser test runs the npm 1.17.0 embed bundle |
 | `v0.2.0` | 1.17.x, pinned at 1.17.0 (`player.player_version`) | the 1.17.0 set, captured (removed in `v0.2.1`) | The same captured fixture set as `v0.1.0`, unchanged. Embed mode now carries chapters, captions and clips on 1.17.0, with the `embed.addon.chapters` and `embed.addon.clips` addon files beside the bundle |
 | `v0.2.1` | 1.19.x, pinned at 1.19.1 (`player.player_version`) | `tests/Fixtures/wire/1.19.1/`, captured | Recaptured by the player repo's harness against the `v1.19.1` checkout (21 fixtures, a 26-beacon session sequence, 14 harness assertions passing); the same keys, events and exit types as 1.17.0, and the harness has no video-change scenario, so the 1.19 new-view boundary is not in the set. Embed mode carries chapters, captions and clips (from player 1.17.0), with the `embed.addon.chapters` and `embed.addon.clips` addon files beside the bundle; the browser test runs the npm 1.19.1 embed bundle |
+| Unreleased (target `v0.3.0`) | Still pinned at 1.19.1; additive ingest support for the 1.19.3 source contract | 1.19.1 captured set retained; `tests/Fixtures/wire/1.19.3/` derived (recapture owed) | Knows `beaconSeq` and `seekSource`; nullable raw `seq` orders timestamp ties. On upgrading the player to 1.19.3, `rebuffer_count` drops sharply, mostly on Safari: `waiting` under the default 250 ms `rebufferGraceMs` no longer counts; `rebufferStart` is sent about 250 ms after the stall began, while `rebuffer_ms` still counts from the first `waiting`. `seek_count` and `seeking` rows rise because progress-bar, keyboard, replay and native-control seeks were not sent before 1.19.3. Both are breaks in continuity across the player upgrade, not ingest bugs. No player repin in this package release |
+
+Player 1.19.3's `rebufferGraceMs: 0` restores immediate rebuffer counting. Its
+`rebufferStart.timestamp` is the send time, not backdated to the first `waiting`;
+confirmed stall durations include the grace. This is player behaviour, not a new PHP
+config key or embed `data-*` attribute.
 
 Two contract rules keep the package and the player from drifting:
 
@@ -1339,8 +1438,10 @@ Two contract rules keep the package and the player from drifting:
   batches beacons (an array body), that is a breaking ingest change: the package answers a
   batched body 422 by name today, and accepting both shapes needs a package major.
 
-The wire fixture set is fully captured. The share-built embed iframe fixture is the one
-derived fixture: it is generated by the share plugin's own snippet builder, taken byte for
+The 1.19.1 wire fixture set is fully captured. The new 1.19.3 beacon fixtures are derived
+from the working-tree analytics contract and explicitly marked `derived (recapture owed)`;
+they do not claim a released-player capture. The share-built embed iframe fixture is
+also derived: it is generated by the share plugin's own snippet builder, taken byte for
 byte from the published 1.19.1 dist, because the capture harness has no share scenario.
 
 The embed bundle location follows `player.embed_bundle`, a template defaulting to
