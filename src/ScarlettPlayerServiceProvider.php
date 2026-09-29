@@ -227,6 +227,7 @@ class ScarlettPlayerServiceProvider extends ServiceProvider
             CorsCheck::class,
             BeaconQueueCheck::class,
             BeaconIpColumnCheck::class,
+            Doctor\Checks\BeaconSeqColumnCheck::class,
             BeaconContextCheck::class,
         ];
     }

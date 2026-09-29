@@ -16,6 +16,8 @@ use Hei\ScarlettPlayer\Tests\Fixtures\Beacons\Beacons;
 use Hei\ScarlettPlayer\Tests\Fixtures\Models\Video;
 use Hei\ScarlettPlayer\Tests\Fixtures\Provider\ArrayResolver;
 use Illuminate\Contracts\Debug\ExceptionHandler;
+use Illuminate\Database\ConnectionResolverInterface;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Schema;
@@ -580,4 +582,176 @@ it('takes the view lock before any other write on MySQL and Postgres, and writes
         expect($first)->toContain('scarlett_views')->toContain('for update')
             ->and(array_filter($statements, fn (string $sql): bool => str_contains($sql, 'insert') && str_contains($sql, 'scarlett_views')))->toBe([]);
     }
+});
+
+describe('raw beacon order', function (): void {
+    it('bounds raw seq portably without losing the original value or view aggregation', function (int|float $seq, ?int $expected, bool $existing): void {
+        if ($existing) {
+            ($this->deliver)(Beacons::payload('viewStart', 0, ['beaconSeq' => 1, 'watchTime' => 100, 'playTime' => 0]));
+        }
+
+        $inserts = [];
+        DB::listen(function ($query) use (&$inserts): void {
+            if (str_starts_with(strtolower($query->sql), 'insert') && str_contains($query->sql, 'scarlett_beacon_events')) {
+                $inserts[] = $query->sql;
+            }
+        });
+
+        $payload = Beacons::payload('heartbeat', 1_000, [
+            'beaconSeq' => $seq, 'watchTime' => 1234.6, 'playTime' => -5, 'qoeScore' => 88.5,
+        ]);
+        ($this->deliver)($payload);
+
+        $row = DB::table('scarlett_beacon_events')->where('event', 'heartbeat')->sole();
+        $view = ($this->view)();
+
+        expect($row->seq === null ? null : (int) $row->seq)->toBe($expected)
+            ->and(json_decode($row->payload, true, 512, JSON_THROW_ON_ERROR))->toEqual($payload->toArray())
+            ->and((int) $view->watch_ms)->toBe(1235)
+            ->and((int) $view->play_ms)->toBe(0)
+            ->and((float) $view->qoe_score)->toBe(88.5)
+            ->and($view->custom)->toBeNull()
+            ->and(DB::table('scarlett_views')->count())->toBe(1)
+            ->and(DB::table('scarlett_beacon_events')->count())->toBe($existing ? 2 : 1)
+            ->and($inserts)->toHaveCount(1);
+
+        if ($expected === null) {
+            expect($inserts[0])->not->toMatch('/["`]?seq["`]?\s*[,)]/');
+        } else {
+            // Zero is an order key too, not an instruction to omit the column.
+            expect($inserts[0])->toMatch('/["`]?seq["`]?\s*[,)]/');
+        }
+    })->with([
+        'portable maximum' => [2147483647, 2147483647],
+        'rounds down to maximum' => [2147483647.4, 2147483647],
+        'rounds above maximum at half' => [2147483647.5, null],
+        'signed integer overflow' => [2147483648, null],
+        'unsigned integer maximum' => [4294967295, null],
+        'unsigned integer overflow' => [4294967296, null],
+        'PHP integer maximum' => [PHP_INT_MAX, null],
+        'PHP integer minimum' => [PHP_INT_MIN, 0],
+        'largest finite float' => [PHP_FLOAT_MAX, null],
+        'smallest finite float' => [-PHP_FLOAT_MAX, 0],
+        'very large positive float' => [1.0e100, null],
+        'very large negative float' => [-1.0e100, 0],
+        'positive half rounds away' => [1.5, 2],
+        'negative half clamps to zero' => [-1.5, 0],
+        'zero remains valid' => [0, 0],
+    ])->with(['new view' => false, 'existing view' => true]);
+
+    it('rejects nonfinite values in the isolated raw sequence normalizer', function (float $seq): void {
+        // JSON cannot represent these values. Do not involve raw payload encoding
+        // when checking the normalizer's defensive behavior for internal callers.
+        $normalizer = new ReflectionMethod(EloquentBeaconStore::class, 'rawSequence');
+
+        expect($normalizer->invoke(app(EloquentBeaconStore::class), $seq))->toBeNull();
+    })->with(['positive infinity' => INF, 'negative infinity' => -INF, 'not a number' => NAN]);
+
+    it('stores the numeric beaconSeq rounded and clamped without changing the raw payload', function (int|float $seq, int $stored): void {
+        $payload = Beacons::payload('seeking', 0, ['beaconSeq' => $seq, 'seekSource' => 'element', 'seekCount' => 1]);
+        ($this->deliver)($payload, $payload);
+
+        $row = DB::table('scarlett_beacon_events')->sole();
+        expect((int) $row->seq)->toBe($stored)
+            ->and(json_decode($row->payload, true))->toMatchArray(['beaconSeq' => $seq, 'seekSource' => 'element'])
+            ->and(($this->view)()->custom)->toBeNull()
+            ->and((int) ($this->view)()->seek_count)->toBe(1);
+    })->with(['integer' => [3, 3], 'fraction' => [3.6, 4], 'negative' => [-3.6, 0], 'zero' => [0, 0]]);
+
+    it('omits seq from the insert when beaconSeq is absent null or the wrong type', function (array $fields): void {
+        expect(Schema::hasColumn('scarlett_beacon_events', 'seq'))->toBeTrue();
+        $inserts = [];
+        DB::listen(function ($query) use (&$inserts): void {
+            if (str_starts_with(strtolower($query->sql), 'insert') && str_contains($query->sql, 'scarlett_beacon_events')) {
+                $inserts[] = $query->sql;
+            }
+        });
+
+        ($this->deliver)(Beacons::payload('heartbeat', 0, $fields));
+
+        expect(DB::table('scarlett_beacon_events')->sole()->seq)->toBeNull()
+            ->and($inserts)->toHaveCount(1)
+            ->and($inserts[0])->not->toMatch('/["`]?seq["`]?\s*[,)]/');
+    })->with(['old player' => [[]], 'null' => [['beaconSeq' => null]], 'numeric string' => [['beaconSeq' => '3']]]);
+
+    it('stores new beacons on a published schema without seq and memoizes its absence per store', function (): void {
+        $hadColumn = Schema::hasColumn('scarlett_beacon_events', 'seq');
+        if ($hadColumn) {
+            Schema::table('scarlett_beacon_events', function (Blueprint $table): void {
+                $table->dropIndex(['view_id', 'occurred_at', 'seq']);
+                $table->dropColumn('seq');
+            });
+        }
+
+        try {
+            $store = app(EloquentBeaconStore::class);
+            $store->record(Beacons::payload('viewStart', 0, ['beaconSeq' => 1]));
+            expect(DB::table('scarlett_beacon_events')->count())->toBe(1)
+                ->and(($this->view)()->custom)->toBeNull();
+        } finally {
+            if ($hadColumn) {
+                Schema::table('scarlett_beacon_events', function (Blueprint $table): void {
+                    $table->unsignedInteger('seq')->nullable();
+                    $table->index(['view_id', 'occurred_at', 'seq']);
+                });
+            }
+        }
+
+        // An existing worker retains its negative detection until restarted.
+        $store->record(Beacons::payload('pause', 1, ['beaconSeq' => 2]));
+        expect(DB::table('scarlett_beacon_events')->where('event', 'pause')->sole()->seq)->toBeNull();
+        app(EloquentBeaconStore::class)->record(Beacons::payload('pause', 2, ['beaconSeq' => 3]));
+        expect((int) DB::table('scarlett_beacon_events')->where('event', 'pause')->where('seq', 3)->sole()->seq)->toBe(3);
+    });
+
+    it('does not change any view column when beaconSeq and seekSource accompany an insert or merge', function (): void {
+        $this->freezeTime();
+        $plain = Beacons::payload('seeking', 10, ['seekCount' => 2, 'seekTo' => 30]);
+        ($this->deliver)($plain);
+        $before = (array) ($this->view)();
+
+        ($this->deliver)(Beacons::payload('seeking', 10, ['seekCount' => 2, 'seekTo' => 30, 'beaconSeq' => 3, 'seekSource' => 'player']));
+        expect((array) ($this->view)())->toBe($before);
+
+        // Reuse the exact beacon identity to compare the insert path too.
+        DB::table('scarlett_views')->delete();
+        ($this->deliver)(Beacons::payload('seeking', 10, ['seekCount' => 2, 'seekTo' => 30, 'beaconSeq' => 3, 'seekSource' => 'player']));
+        $inserted = (array) ($this->view)();
+        // Only the surrogate id differs between two independent inserts.
+        $inserted['id'] = $before['id'];
+        expect($inserted)->toBe($before);
+    });
+
+    it('reads same-millisecond rebuffer pairs by seq rather than queue arrival and preserves totals', function (): void {
+        ($this->deliver)(
+            Beacons::payload('viewStart', 0, ['beaconSeq' => 1]),
+            Beacons::payload('rebufferEnd', 1_000, ['beaconSeq' => 3, 'duration' => 250, 'totalRebufferTime' => 900]),
+            Beacons::payload('rebufferStart', 1_000, ['beaconSeq' => 2, 'rebufferCount' => 2, 'currentTime' => 30]),
+        );
+
+        $rows = DB::table('scarlett_beacon_events')->where('view_id', Beacons::VIEW);
+        expect((clone $rows)->orderBy('id')->pluck('event')->all())->toBe(['viewStart', 'rebufferEnd', 'rebufferStart'])
+            ->and($rows->orderBy('occurred_at')->orderBy('seq')->orderBy('id')->pluck('event')->all())->toBe(['viewStart', 'rebufferStart', 'rebufferEnd'])
+            ->and((int) ($this->view)()->rebuffer_ms)->toBe(900)
+            ->and((int) ($this->view)()->rebuffer_count)->toBe(2);
+    });
+
+    it('checks the seq column only once per store and outside the beacon transaction', function (): void {
+        $schema = Mockery::mock(Schema::getFacadeRoot())->makePartial();
+        $schema->shouldReceive('hasColumn')->with('scarlett_beacon_events', 'seq')->once()->andReturnUsing(function (): bool {
+            expect(DB::transactionLevel())->toBe(0);
+
+            return true;
+        });
+        $connection = Mockery::mock(DB::connection())->makePartial();
+        $connection->shouldReceive('getSchemaBuilder')->once()->andReturn($schema);
+        $database = Mockery::mock(ConnectionResolverInterface::class);
+        $database->shouldReceive('connection')->andReturn($connection);
+        $store = new EloquentBeaconStore($database, config(), app('events'), app());
+
+        $store->record(Beacons::payload('viewStart', 0, ['beaconSeq' => 1]));
+        $store->record(Beacons::payload('pause', 1, ['beaconSeq' => 2]));
+
+        expect(DB::table('scarlett_beacon_events')->count())->toBe(2);
+    });
 });

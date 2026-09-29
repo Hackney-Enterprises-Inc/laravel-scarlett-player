@@ -100,7 +100,7 @@ it('replaces custom dimensions and the address without touching anything else', 
         ->and($payload->custom)->toBe(['email' => 'viewer@example.com']);
 });
 
-it('knows every key the 1.16.x analytics plugin sends', function (): void {
+it('knows every key the analytics plugin sends through player 1.19.3', function (): void {
     // index.ts sendBeacon()/sendUnloadBeacon() base keys, then every data object
     // the plugin passes (heartbeat, videoStart, rebufferEnd, pause, rebufferStart,
     // seeking, error, qualityChange, both viewEnd variants, the latency summary).
@@ -112,10 +112,44 @@ it('knows every key the 1.16.x analytics plugin sends', function (): void {
         'fatal', 'bitrate', 'width', 'height', 'auto', 'rebufferRatio', 'maxBitrate',
         'qualityChanges', 'pauseCount', 'pauseDuration', 'errorCount', 'exitType',
         'completionRate', 'liveLatencySamples', 'liveLatencyMean', 'liveLatencyP95',
-        'liveLatencyMax', 'lowLatency',
+        'liveLatencyMax', 'lowLatency', 'beaconSeq', 'seekSource',
     ];
 
     expect(array_keys([...BeaconPayload::CONTEXT, ...BeaconPayload::FIELDS]))->toEqualCanonicalizing($shipped);
+});
+
+describe('player 1.19.3 fields', function (): void {
+    it('keeps numeric beaconSeq in fields and unrelated host dimensions in custom', function (int|float $seq): void {
+        $payload = Beacons::payload('heartbeat', 0, ['beaconSeq' => $seq, 'campaign' => 'spring', 'seq' => 'host']);
+
+        expect($payload->fields)->toBe(['beaconSeq' => $seq])
+            ->and($payload->custom)->toBe(['campaign' => 'spring', 'seq' => 'host']);
+    })->with([1, 2.6, -3]);
+
+    it('keeps a string beaconSeq as custom without rejecting or coercing it', function (): void {
+        $payload = Beacons::payload('seeking', 0, ['beaconSeq' => '2', 'seekSource' => 'player']);
+
+        expect($payload->fields)->toBe(['seekSource' => 'player'])
+            ->and($payload->custom)->toBe(['beaconSeq' => '2']);
+    });
+
+    it('recognizes seekSource without imposing an enum on string host values', function (string $source): void {
+        $payload = Beacons::payload('seeking', 0, ['seekSource' => $source]);
+
+        expect($payload->fields)->toBe(['seekSource' => $source])
+            ->and($payload->custom)->toBe([]);
+    })->with(['player', 'element', 'host-value']);
+
+    it('preserves wrong-type seekSource in custom and omits null ordering fields', function (): void {
+        $payload = Beacons::payload('seeking', 0, ['beaconSeq' => 1, 'seekSource' => 7]);
+        $nulls = Beacons::payload('seeking', 0, ['beaconSeq' => null, 'seekSource' => null]);
+
+        expect($payload->fields)->toBe(['beaconSeq' => 1])
+            ->and($payload->custom)->toBe(['seekSource' => 7])
+            ->and($nulls->fields)->toBe([])
+            ->and($nulls->custom)->toBe([])
+            ->and($nulls->toArray())->not->toHaveKeys(['beaconSeq', 'seekSource']);
+    });
 });
 
 describe('server context', function (): void {
@@ -232,6 +266,176 @@ describe('event key stability', function (): void {
     it('still tells two different beacons apart', function (): void {
         expect(EloquentBeaconStore::eventKey(Beacons::payload('heartbeat', 0, ['plan' => 'a'])))
             ->not->toBe(EloquentBeaconStore::eventKey(Beacons::payload('heartbeat', 0, ['plan' => 'b'])));
+    });
+});
+
+describe('legacy hashes after field promotion', function (): void {
+    it('hashes the explicit legacy normalization without changing classification', function (array $received, array $normalized, array $fields, array $custom): void {
+        // Deliberately scramble identity order and exercise the original casts.
+        $payload = BeaconPayload::fromArray(array_replace([
+            'videoId' => 4, 'viewerId' => 3, 'timestamp' => (string) Beacons::T0,
+            'sessionId' => 2, 'event' => 'error', 'viewId' => 1,
+        ], $received));
+        // These expected maps are explicit pre-promotion output, independent of
+        // FIELDS, browserArray() and fromArray()'s classification algorithm.
+        $legacy = array_replace([
+            'event' => 'error', 'timestamp' => Beacons::T0, 'viewId' => '1',
+            'sessionId' => '2', 'viewerId' => '3', 'videoId' => '4',
+        ], $normalized);
+        $hash = sha1((string) json_encode($legacy, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+
+        expect($payload->bodyHash)->toBe($hash)
+            ->and(EloquentBeaconStore::eventKey($payload))->toBe(sha1('1error'.Beacons::T0.$hash))
+            ->and($payload->fields)->toBe($fields)
+            ->and($payload->custom)->toBe($custom);
+    })->with([
+        'sequence alone before an old field' => [
+            ['beaconSeq' => 2, 'errorType' => 'network'],
+            ['errorType' => 'network', 'beaconSeq' => 2],
+            ['beaconSeq' => 2, 'errorType' => 'network'], [],
+        ],
+        'source alone before an old field' => [
+            ['seekSource' => 'element', 'errorType' => 'network'],
+            ['errorType' => 'network', 'seekSource' => 'element'],
+            ['seekSource' => 'element', 'errorType' => 'network'], [],
+        ],
+        'both promotions without other keys' => [
+            ['seekSource' => 'player', 'beaconSeq' => 2.6],
+            ['seekSource' => 'player', 'beaconSeq' => 2.6],
+            ['seekSource' => 'player', 'beaconSeq' => 2.6], [],
+        ],
+        'custom before between and after promotions' => [
+            ['first' => 1, 'beaconSeq' => 2, 'middle' => 3, 'errorType' => 'network', 'seekSource' => 'player', 'last' => 4],
+            ['errorType' => 'network', 'first' => 1, 'beaconSeq' => 2, 'middle' => 3, 'seekSource' => 'player', 'last' => 4],
+            ['beaconSeq' => 2, 'errorType' => 'network', 'seekSource' => 'player'],
+            ['first' => 1, 'middle' => 3, 'last' => 4],
+        ],
+        'reverse promotion and custom order' => [
+            ['last' => 4, 'seekSource' => 'player', 'middle' => 3, 'beaconSeq' => 2, 'first' => 1, 'errorType' => 'network'],
+            ['errorType' => 'network', 'last' => 4, 'seekSource' => 'player', 'middle' => 3, 'beaconSeq' => 2, 'first' => 1],
+            ['seekSource' => 'player', 'beaconSeq' => 2, 'errorType' => 'network'],
+            ['last' => 4, 'middle' => 3, 'first' => 1],
+        ],
+        'context and old fields retain received order' => [
+            ['fatal' => false, 'os' => 'macOS', 'first' => 1, 'seekSource' => 'element', 'errorType' => 'network', 'browser' => 'Chrome', 'beaconSeq' => 2],
+            ['os' => 'macOS', 'browser' => 'Chrome', 'fatal' => false, 'errorType' => 'network', 'first' => 1, 'seekSource' => 'element', 'beaconSeq' => 2],
+            ['fatal' => false, 'seekSource' => 'element', 'errorType' => 'network', 'beaconSeq' => 2],
+            ['first' => 1],
+        ],
+        'wrong types remain interleaved custom' => [
+            ['first' => 1, 'beaconSeq' => '2', 'duration' => 'long', 'seekSource' => ['element'], 'isLive' => 'unknown', 'fatal' => false],
+            ['fatal' => false, 'first' => 1, 'beaconSeq' => '2', 'duration' => 'long', 'seekSource' => ['element'], 'isLive' => 'unknown'],
+            ['fatal' => false],
+            ['first' => 1, 'beaconSeq' => '2', 'duration' => 'long', 'seekSource' => ['element'], 'isLive' => 'unknown'],
+        ],
+        'one wrong type and one promoted field' => [
+            ['seekSource' => 7, 'first' => 1, 'beaconSeq' => 2, 'fatal' => true],
+            ['fatal' => true, 'seekSource' => 7, 'first' => 1, 'beaconSeq' => 2],
+            ['beaconSeq' => 2, 'fatal' => true], ['seekSource' => 7, 'first' => 1],
+        ],
+        'nulls are absent in every category' => [
+            ['beaconSeq' => null, 'first' => null, 'seekSource' => null, 'fatal' => null, 'isLive' => null, 'last' => 4],
+            ['last' => 4], [], ['last' => 4],
+        ],
+        'numeric keys nesting Unicode and slashes' => [
+            ['5' => ['9' => "caf\u{00e9}/path", 'a' => [true, null]], 'beaconSeq' => 2, '0' => 'zero', 'seekSource' => 'player', '05' => 'padded'],
+            ['5' => ['9' => "caf\u{00e9}/path", 'a' => [true, null]], 'beaconSeq' => 2, '0' => 'zero', 'seekSource' => 'player', '05' => 'padded'],
+            ['beaconSeq' => 2, 'seekSource' => 'player'],
+            ['5' => ['9' => "caf\u{00e9}/path", 'a' => [true, null]], '0' => 'zero', '05' => 'padded'],
+        ],
+        'no promoted names' => [
+            ['plan' => 'ppv', 'fatal' => false, 'os' => 'macOS', 'errorType' => 'network', 'browser' => 'Chrome', 'duration' => 'long'],
+            ['os' => 'macOS', 'browser' => 'Chrome', 'fatal' => false, 'errorType' => 'network', 'plan' => 'ppv', 'duration' => 'long'],
+            ['fatal' => false, 'errorType' => 'network'], ['plan' => 'ppv', 'duration' => 'long'],
+        ],
+    ]);
+
+    it('retains the legacy order sensitivity rather than sorting keys', function (): void {
+        $first = Beacons::payload('error', 0, ['plan' => 'ppv', 'beaconSeq' => 2, 'seekSource' => 'player']);
+        $second = Beacons::payload('error', 0, ['beaconSeq' => 2, 'plan' => 'ppv', 'seekSource' => 'player']);
+
+        expect($first->browserArray())->toBe($second->browserArray())
+            ->and($first->bodyHash)->not->toBe($second->bodyHash);
+    });
+
+    it('keeps the legacy hash through ownership redaction address changes and a current queued job', function (): void {
+        $body = [
+            'event' => 'error', 'timestamp' => 123, 'viewId' => 'v',
+            'sessionId' => 's', 'viewerId' => 'u', 'videoId' => 'm',
+            'user_id' => 'spoofed', 'beaconSeq' => 2, 'tenant' => 'browser',
+            'seekSource' => 'player', 'errorType' => 'network',
+        ];
+        // Frozen legacy JSON, not the current DTO's reconstructed browser array.
+        $hash = sha1('{"event":"error","timestamp":123,"viewId":"v","sessionId":"s","viewerId":"u","videoId":"m","errorType":"network","user_id":"spoofed","beaconSeq":2,"tenant":"browser","seekSource":"player"}');
+        $plain = BeaconPayload::fromArray($body, '203.0.113.0');
+        $owned = $plain->withServer(['user_id' => null, 'tenant' => 7]);
+        $redacted = $owned->withCustom(['user_id' => 'again', 'tenant' => 'again', 'plan' => 'free']);
+        $moved = $redacted->withIp('203.0.113.1');
+        $anonymous = $moved->withIp(null);
+        $job = unserialize(serialize(new ProcessBeacon($anonymous)));
+
+        foreach ([$plain, $owned, $redacted, $moved, $anonymous, $job->payload] as $payload) {
+            expect($payload->bodyHash)->toBe($hash)
+                ->and(EloquentBeaconStore::eventKey($payload))->toBe(sha1('verror123'.$hash));
+        }
+
+        expect($plain->bodyHash)->not->toBe(sha1((string) json_encode($plain->browserArray(), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)))
+            ->and($job->payload)->toEqual($anonymous)
+            ->and($job->payload->custom)->toBe(['plan' => 'free'])
+            ->and($job->payload->server)->toBe(['tenant' => 7])
+            ->and($job->payload->owned)->toBe(['user_id', 'tenant'])
+            ->and($job->payload->ip)->toBeNull();
+    });
+
+    it('restores old queued classification with or without a stored hash', function (bool $hasHash, bool $hasServer): void {
+        $identity = [
+            'event' => 'error', 'timestamp' => 123, 'viewId' => 'v',
+            'sessionId' => 's', 'viewerId' => 'u', 'videoId' => 'm',
+        ];
+        $context = ['browser' => 'Chrome'];
+        $fields = ['errorType' => 'network'];
+        $custom = ['plan' => 'ppv', 'beaconSeq' => 2, 'seekSource' => 'player'];
+        $legacy = array_replace($identity, $context, $fields, $custom);
+        $hash = sha1((string) json_encode($legacy, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+        $state = array_replace($identity, ['context' => $context, 'fields' => $fields, 'custom' => $custom, 'ip' => null]);
+        if ($hasHash) {
+            $state['bodyHash'] = $hash;
+        }
+        if ($hasServer) {
+            // Older queues with server but no owned property infer ownership.
+            $state['server'] = ['tenant' => 7];
+        }
+        $serialized = str_replace('O:8:"stdClass"', 'O:'.strlen(BeaconPayload::class).':"'.BeaconPayload::class.'"', serialize((object) $state));
+        $restored = unserialize($serialized);
+        $fresh = BeaconPayload::fromArray($legacy);
+
+        expect($restored)->toBeInstanceOf(BeaconPayload::class)
+            ->and($restored->bodyHash)->toBe($hash)
+            ->and($restored->bodyHash)->toBe($fresh->bodyHash)
+            ->and($restored->fields)->toBe($fields)
+            ->and($restored->custom)->toBe($custom)
+            ->and($restored->has('beaconSeq'))->toBeFalse()
+            ->and($restored->has('seekSource'))->toBeFalse()
+            ->and($restored->server)->toBe($hasServer ? ['tenant' => 7] : [])
+            ->and($restored->owned)->toBe($hasServer ? ['tenant'] : [])
+            ->and($restored->withCustom(['tenant' => 'spoofed'])->custom)->toBe($hasServer ? [] : ['tenant' => 'spoofed']);
+    })->with(['stored hash' => true, 'missing hash' => false])
+        ->with(['server without owned' => true, 'missing server and owned' => false]);
+
+    it('treats an explicitly supplied hash as authoritative including on queue restoration', function (): void {
+        $payload = new BeaconPayload('error', 123, 'v', 's', 'u', 'm',
+            fields: ['beaconSeq' => 2], custom: ['plan' => 'ppv'], bodyHash: str_repeat('a', 40));
+        $restored = unserialize(serialize($payload));
+
+        expect($restored->bodyHash)->toBe(str_repeat('a', 40))
+            ->and($restored->withServer(['plan' => null])->withCustom([])->withIp(null)->bodyHash)->toBe(str_repeat('a', 40));
+    });
+
+    it('leaves the direct constructor fallback based on its supplied classification', function (): void {
+        $payload = new BeaconPayload('error', 123, 'v', 's', 'u', 'm',
+            fields: ['beaconSeq' => 2], custom: ['plan' => 'ppv']);
+
+        expect($payload->bodyHash)->toBe(sha1('{"event":"error","timestamp":123,"viewId":"v","sessionId":"s","viewerId":"u","videoId":"m","beaconSeq":2,"plan":"ppv"}'));
     });
 });
 

@@ -11,7 +11,9 @@ use Illuminate\Support\Facades\Schema;
  * makes a bug in aggregation recoverable, and about 90% heartbeats, so it is pruned
  * on beacons.retention.events by received_at (the server clock). event_key is
  * sha1(viewId . event . timestamp . sha1(payload)) and unique: a redelivered job
- * inserts nothing.
+ * inserts nothing. Read a view's events by occurred_at, seq, id, never id alone:
+ * queue arrival order is not playback order. seq is the player's per-view beacon
+ * number (1.19.3+); older players leave it null and order by time only.
  */
 return new class extends Migration
 {
@@ -23,8 +25,10 @@ return new class extends Migration
             $table->string('event', 191);
             $table->char('event_key', 40)->unique();
             $table->dateTime('occurred_at', 3);
+            $table->unsignedInteger('seq')->nullable();
             $table->json('payload');
             $table->dateTime('received_at', 3)->index();
+            $table->index(['view_id', 'occurred_at', 'seq']);
         });
     }
 

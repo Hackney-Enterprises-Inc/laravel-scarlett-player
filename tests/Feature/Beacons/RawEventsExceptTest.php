@@ -123,3 +123,23 @@ it('matches event names exactly', function (): void {
 
     expect(($this->rawEvents)())->toBe(['heartbeat']);
 });
+
+it('leaves an expected seq gap for an excluded heartbeat without losing its view metrics', function (): void {
+    config()->set('scarlett-player.beacons.raw_events_except', ['heartbeat']);
+
+    ($this->deliver)(
+        Beacons::payload('viewStart', 0, ['beaconSeq' => 1]),
+        Beacons::payload('heartbeat', 10_000, ['beaconSeq' => 2, 'watchTime' => 10_000, 'qoeScore' => 80]),
+        Beacons::payload('viewEnd', 11_000, ['beaconSeq' => 3, 'exitType' => 'abandoned']),
+    );
+
+    $view = DB::table('scarlett_views')->sole();
+    expect(DB::table('scarlett_beacon_events')->orderBy('occurred_at')->orderBy('seq')->orderBy('id')->pluck('seq')->map(fn ($seq): int => (int) $seq)->all())->toBe([1, 3])
+        ->and(($this->rawEvents)())->toBe(['viewStart', 'viewEnd'])
+        ->and((int) $view->watch_ms)->toBe(10_000)
+        ->and((float) $view->qoe_score)->toBe(80.0)
+        ->and($view->custom)->toBeNull();
+
+    Event::assertDispatchedTimes(ViewStarted::class, 1);
+    Event::assertDispatchedTimes(ViewEnded::class, 1);
+});

@@ -71,3 +71,14 @@ it('ships one migration file per table, numbered in the plan schema order', func
         '0001_01_01_000003_create_scarlett_view_errors_table.php',
     ]);
 });
+
+it('creates a nullable seq and the raw event reading-order index while keeping the view index', function (): void {
+    $this->usesMigrations();
+
+    expect(Schema::hasColumn('scarlett_beacon_events', 'seq'))->toBeTrue()
+        ->and(Schema::hasIndex('scarlett_beacon_events', ['view_id', 'occurred_at', 'seq']))->toBeTrue()
+        ->and(Schema::hasIndex('scarlett_beacon_events', ['view_id']))->toBeTrue();
+
+    $column = collect(Schema::getColumns('scarlett_beacon_events'))->firstWhere('name', 'seq');
+    expect($column['nullable'])->toBeTrue();
+});

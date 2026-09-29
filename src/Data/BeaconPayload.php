@@ -27,14 +27,20 @@ use Hei\ScarlettPlayer\Exceptions\InvalidBeaconContextException;
 final readonly class BeaconPayload
 {
     /**
-     * sha1 of the beacon as received, before any with*() change: what the event key
-     * hashes, so neither a redaction nor the server context moves it. Equal to v0.1.0's
-     * hash of an unredacted beacon.
+     * sha1 of the legacy-normalized beacon as received, before any with*() change.
+     * Field promotions preserve the old custom-key order for deduplication, so this
+     * need not equal the hash of the current browserArray(), even before redaction.
      */
     public string $bodyHash;
 
     /** Keys every beacon carries. The four ids are required. */
     public const IDENTITY = ['event', 'timestamp', 'viewId', 'sessionId', 'viewerId', 'videoId'];
+
+    /**
+     * Frozen v0.3.0 promotions: these names remain custom in the v0.2.1 hash basis,
+     * regardless of type. Do not remove them when changing DTO classification.
+     */
+    private const LEGACY_HASH_CUSTOM = ['beaconSeq', 'seekSource'];
 
     /**
      * Context keys on every beacon, by the type validation accepts.
@@ -55,12 +61,16 @@ final readonly class BeaconPayload
     ];
 
     /**
-     * Event-specific keys shipped in player 1.16.x, by the type validation accepts.
+     * Beacon keys shipped through player 1.19.3, by the type validation accepts.
      * `scalar` is a string or a number (errorCode is either).
      *
      * @var array<string, 'numeric'|'string'|'boolean'|'scalar'>
      */
     public const FIELDS = [
+        // every beacon (player 1.19.3)
+        'beaconSeq' => 'numeric',
+        // seeking
+        'seekSource' => 'string',
         // videoStart, heartbeat, viewEnd
         'startupTime' => 'numeric',
         'watchTime' => 'numeric',
@@ -139,6 +149,7 @@ final readonly class BeaconPayload
         $context = [];
         $fields = [];
         $custom = [];
+        $legacyCustom = [];
 
         foreach ($data as $key => $value) {
             $key = (string) $key;
@@ -150,6 +161,12 @@ final readonly class BeaconPayload
             // Present-but-null is absent, for known keys and custom dimensions alike.
             if ($value === null) {
                 continue;
+            }
+
+            // Collect during receipt, not after splitting: custom dimensions can
+            // precede, follow or interleave the promoted names in the old hash.
+            if (in_array($key, self::LEGACY_HASH_CUSTOM, true)) {
+                $legacyCustom[$key] = $value;
             }
 
             $type = self::CONTEXT[$key] ?? self::FIELDS[$key] ?? null;
@@ -170,7 +187,17 @@ final readonly class BeaconPayload
             // an event that does not set it arrives under a known name. It is kept
             // as a custom dimension rather than refused.
             $custom[$key] = $value;
+            $legacyCustom[$key] = $value;
         }
+
+        $legacyBody = array_replace([
+            'event' => (string) $data['event'],
+            'timestamp' => (int) $data['timestamp'],
+            'viewId' => (string) $data['viewId'],
+            'sessionId' => (string) $data['sessionId'],
+            'viewerId' => (string) $data['viewerId'],
+            'videoId' => (string) $data['videoId'],
+        ], $context, array_diff_key($fields, array_flip(self::LEGACY_HASH_CUSTOM)), $legacyCustom);
 
         return new self(
             event: (string) $data['event'],
@@ -183,6 +210,7 @@ final readonly class BeaconPayload
             fields: $fields,
             custom: $custom,
             ip: $ip,
+            bodyHash: sha1((string) json_encode($legacyBody, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)),
         );
     }
 
@@ -289,8 +317,8 @@ final readonly class BeaconPayload
 
     /**
      * The beacon as the browser sent it, after any redaction: identity, the known keys
-     * present, then custom dimensions, without the server context. $bodyHash is the
-     * hash of this as received.
+     * present, then custom dimensions, without the server context. $bodyHash keeps
+     * the legacy classification order as received, not necessarily this array's hash.
      *
      * @return array<string, mixed>
      */

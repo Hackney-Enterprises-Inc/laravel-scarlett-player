@@ -8,10 +8,12 @@ use Hei\ScarlettPlayer\Doctor\Checks\BeaconContextCheck;
 use Hei\ScarlettPlayer\Doctor\Checks\BeaconIpColumnCheck;
 use Hei\ScarlettPlayer\Doctor\Checks\BeaconQueueCheck;
 use Hei\ScarlettPlayer\Doctor\Checks\BeaconRouteCheck;
+use Hei\ScarlettPlayer\Doctor\Checks\BeaconSeqColumnCheck;
 use Hei\ScarlettPlayer\Doctor\Checks\CorsCheck;
 use Hei\ScarlettPlayer\Doctor\CheckStatus;
 use Hei\ScarlettPlayer\Tests\Fixtures\Beacons\DropHeartbeats;
 use Hei\ScarlettPlayer\Tests\Fixtures\Beacons\RecordingContext;
+use Illuminate\Database\ConnectionResolverInterface;
 use Illuminate\Routing\RouteCollection;
 use Illuminate\Support\Facades\Schema;
 
@@ -49,6 +51,52 @@ it('lists the beacon checks in the doctor registry', function (): void {
     $names = array_map(fn ($check): string => $check::class, app(CheckRegistry::class)->checks());
 
     expect($names)->toContain(CorsCheck::class, BeaconQueueCheck::class, BeaconRouteCheck::class, BeaconIpColumnCheck::class, BeaconContextCheck::class);
+    expect($names)->toContain(BeaconSeqColumnCheck::class);
+});
+
+describe('beacon seq column', function (): void {
+    it('passes when the seq column exists', function (): void {
+        $this->usesMigrations();
+
+        expect(app(BeaconSeqColumnCheck::class)->name())->toBe('beacon seq column')
+            ->and(beaconCheck(BeaconSeqColumnCheck::class)->status)->toBe(CheckStatus::Pass);
+    });
+
+    it('passes without inspecting the database when raw events are off', function (): void {
+        config()->set('scarlett-player.beacons.store_raw_events', false);
+        $database = Mockery::mock(ConnectionResolverInterface::class);
+        $database->shouldNotReceive('connection');
+
+        expect((new BeaconSeqColumnCheck(config(), $database))->run()->status)->toBe(CheckStatus::Pass);
+    });
+
+    it('warns with the host schema upgrade when seq is missing', function (): void {
+        $this->usesMigrations();
+        $hadColumn = Schema::hasColumn('scarlett_beacon_events', 'seq');
+        if ($hadColumn) {
+            Schema::table('scarlett_beacon_events', function ($table): void {
+                $table->dropIndex(['view_id', 'occurred_at', 'seq']);
+                $table->dropColumn('seq');
+            });
+        }
+
+        try {
+            $result = beaconCheck(BeaconSeqColumnCheck::class);
+            expect($result->status)->toBe(CheckStatus::Warn)
+                ->and($result->message)->toContain('scarlett_beacon_events has no seq column', 'player 1.19.3+', "\$table->unsignedInteger('seq')->nullable();", "\$table->index(['view_id', 'occurred_at', 'seq']);");
+        } finally {
+            if ($hadColumn) {
+                Schema::table('scarlett_beacon_events', function ($table): void {
+                    $table->unsignedInteger('seq')->nullable();
+                    $table->index(['view_id', 'occurred_at', 'seq']);
+                });
+            }
+        }
+    });
+
+    it('warns when the raw events table has not been migrated', function (): void {
+        expect(beaconCheck(BeaconSeqColumnCheck::class)->status)->toBe(CheckStatus::Warn);
+    });
 });
 
 describe('beacon cors', function (): void {

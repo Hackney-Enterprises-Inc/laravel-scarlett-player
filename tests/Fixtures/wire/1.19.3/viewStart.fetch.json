@@ -1,0 +1,43 @@
+{
+  "fixture": {
+    "player": "1.19.3",
+    "status": "derived (recapture owed)",
+    "derivedAt": "2026-09-29",
+    "event": "viewStart",
+    "transport": "fetch",
+    "variant": null,
+    "scenario": "derived-seek-sources"
+  },
+  "request": {
+    "method": "POST",
+    "path": "/api/scarlett/beacons",
+    "query": {},
+    "headers": {
+      "content-type": "application/json",
+      "x-api-key": "wire-capture-key"
+    },
+    "body": {
+      "event": "viewStart",
+      "timestamp": 1790622090580,
+      "viewId": "derived-1.19.3-seek-sources",
+      "sessionId": "derived-1.19.3-session",
+      "viewerId": "derived-1.19.3-viewer",
+      "videoId": "wire-fixture-vod",
+      "videoTitle": "Wire fixture (VOD)",
+      "isLive": null,
+      "playerVersion": "1.19.3",
+      "playerName": "scarlett-player",
+      "browser": "Chrome",
+      "os": "macOS",
+      "deviceType": "desktop",
+      "screenSize": "1280x720",
+      "playerSize": "640x360",
+      "connectionType": "4g",
+      "tenant": "wire",
+      "planTier": "free",
+      "experiment": 42,
+      "beta": true,
+      "beaconSeq": 1
+    }
+  }
+}
