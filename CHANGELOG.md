@@ -8,7 +8,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- Signals ingest recognizes structured error details, `qoeVersion`, explicit nullable `qoeScore`, warning counts, segment/frame intervals, page context and `anonymous`. Wrong types remain custom dimensions. The additive signals migration adds view/error columns and backfills existing scored views as QoE v1; publish and run it before deploying the new workers.
+- Signals ingest recognizes structured error details, `qoeVersion`, explicit nullable `qoeScore`, warning counts, segment/frame intervals, page context and `anonymous`. Wrong types remain custom dimensions. The additive signals migration adds view/error columns and backfills existing scored views as QoE v1; publish only this migration on existing hosts with `scarlett-migrations-signals`, then migrate and restart workers.
 - Versioned QoE aggregation: score and version share a timestamp, explicit null clears an earlier score, and older beacons cannot restore a score cleared by a newer access denial. README averages separate v1/v2 and exclude null without dropping real zeroes.
 - Latest reported segment/frame interval columns, monotonic warning counts, structured error persistence even with raw storage off, and page/anonymous context storage.
 - `PlayerConfigBuilder::analyticsPrivacy()`, Blade `anonymous` and `respect-do-not-track` options, and matching player config/environment defaults. Module and Full embed integrations forward privacy flags; JavaScript callback options remain available through the module initialiser.
@@ -16,8 +16,16 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- Target `player.player_version` 1.20.0. Published artifact verification remains pending because npm returned 404 during preparation. Batching remains disabled and unsupported; do not enable it against this endpoint.
+- Keep the default `player.player_version` at the verified 1.19.1 while preparing signals support for 1.20.0. Published artifact verification remains pending because npm returned 404 during preparation. Batching remains disabled and unsupported; do not enable it against this endpoint.
 - New field promotions retain the legacy normalized deduplication hash and authoritative queued hashes.
+
+### Fixed
+
+- Existing hosts can publish only the signals migration under a stable filename, avoiding duplicate timestamped create migrations. A regression exercises Laravel's default timestamp rewriting and repeated upgrades.
+- Missing signal columns no longer break legacy or new ingest. Cached detection skips unavailable fields; a doctor check identifies incomplete schemas. Before the version column exists, v2/unknown scores stay out of legacy averages while raw payloads retain them.
+- Both module and embed modes reject enabled privacy flags below player 1.20.0. Privacy environment values accept standard boolean strings.
+- Present unusable QoE versions remain unknown instead of being recorded as v1.
+- Segment measurements share an interval timestamp and clear omitted throughput, preventing values from different intervals being combined.
 
 ## [0.3.0] - 2026-09-29
 

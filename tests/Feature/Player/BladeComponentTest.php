@@ -232,6 +232,7 @@ it('loads the UMD addons as classic scripts beside a UMD bundle', function (): v
 });
 
 it('forwards privacy flags through module and embed Blade components with explicit false overrides', function (string $mode): void {
+    config()->set('scarlett-player.player.player_version', '1.20.0');
     config()->set('scarlett-player.player.analytics_anonymous', true);
     config()->set('scarlett-player.player.analytics_respect_do_not_track', true);
     $html = (string) $this->blade('<x-scarlett-player media="video-1" :mode="$mode" analytics :anonymous="false" respect-do-not-track />', ['mode' => $mode]);

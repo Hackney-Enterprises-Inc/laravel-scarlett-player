@@ -49,7 +49,7 @@ it('emits schema version 1 with the media source and defaults', function (): voi
     expect($config)->toMatchArray([
         'scarlettConfigVersion' => 1,
         'mode' => 'module',
-        'playerVersion' => '1.20.0',   // the target pin
+        'playerVersion' => '1.19.1',   // the validated default
         'mediaId' => 'video-1',
         'source' => ['src' => 'https://media.example.test/video-1.m3u8', 'isLive' => false, 'duration' => 120.0],
         'poster' => null,
@@ -92,8 +92,6 @@ it('wires analytics from the beacon route, the media id and the beacon key', fun
         'apiKey' => TestCase::BEACON_KEY,
         'videoTitle' => null,
         'isLive' => false,
-        'anonymous' => false,
-        'respectDoNotTrack' => false,
     ]);
 });
 
@@ -321,8 +319,6 @@ it('maps to embed data attributes using only README names', function (): void {
         'data-analytics-beacon-url' => route('scarlett.beacons.store'),
         'data-analytics-video-id' => 'video-1',
         'data-analytics-api-key' => TestCase::BEACON_KEY,
-        'data-analytics-anonymous' => 'false',
-        'data-analytics-respect-dnt' => 'false',
     ]);
 
     // The published embed README for the pinned player (tests/Fixtures/embed/attributes/).
@@ -477,8 +473,8 @@ it('names the addon files the embed config needs, beside the bundle and in its f
     $both = ScarlettPlayer::for('video-1')->mode('embed')->withClips()->withChapters([])->withCaptions([]);
 
     expect($both->embedAddonUrls())->toBe([
-        'https://cdn.example.test/scarlett-player/v1.20.0/embed.addon.chapters.js',
-        'https://cdn.example.test/scarlett-player/v1.20.0/embed.addon.clips.js',
+        'https://cdn.example.test/scarlett-player/v1.19.1/embed.addon.chapters.js',
+        'https://cdn.example.test/scarlett-player/v1.19.1/embed.addon.clips.js',
     ])
         ->and(ScarlettPlayer::for('video-1')->mode('embed')->withCaptions([])->embedAddonUrls())->toBe([])
         ->and(ScarlettPlayer::for('video-1')->withClips()->embedAddonUrls())->toBe([]);
@@ -529,4 +525,30 @@ it('still builds analytics and share on the Audio build', function (): void {
     } catch (UnsupportedInEmbedMode $e) {
         expect($e->build)->toBe('embed.audio.umd.cjs')->and($e->feature)->toBe('captions');
     }
+});
+
+it('refuses enabled privacy on module and embed players before 1.20.0', function (string $mode, string $version, string $key): void {
+    config()->set('scarlett-player.player.player_version', $version);
+    config()->set('scarlett-player.player.cdn_url', 'https://cdn.example.test/scarlett-player');
+    config()->set('scarlett-player.player.'.$key, true);
+    expect(fn () => ScarlettPlayer::for('video-1')->mode($mode)->withAnalytics()->toArray())
+        ->toThrow(ScarlettPlayerException::class);
+})->with(['module', 'embed'])->with(['1.19.1', '1.19.3'])->with(['analytics_anonymous', 'analytics_respect_do_not_track']);
+
+it('parses boolean environment-style privacy values in either integration mode', function (string $mode, mixed $value, bool $expected): void {
+    config()->set('scarlett-player.player.player_version', '1.20.0');
+    config()->set('scarlett-player.player.cdn_url', 'https://cdn.example.test/scarlett-player');
+    config()->set('scarlett-player.player.analytics_anonymous', $value);
+    config()->set('scarlett-player.player.analytics_respect_do_not_track', $value);
+    $analytics = ScarlettPlayer::for('video-1')->mode($mode)->withAnalytics()->toArray()['analytics'];
+    expect($analytics['anonymous'])->toBe($expected)->and($analytics['respectDoNotTrack'])->toBe($expected);
+})->with(['module', 'embed'])->with([
+    ['1', true], ['on', true], ['yes', true], [1, true], ['true', true],
+    ['0', false], ['off', false], ['no', false], [0, false], ['false', false],
+]);
+
+it('rejects malformed privacy values instead of silently disabling privacy', function (): void {
+    config()->set('scarlett-player.player.player_version', '1.20.0');
+    config()->set('scarlett-player.player.analytics_respect_do_not_track', 'sometimes');
+    expect(fn () => ScarlettPlayer::for('video-1')->withAnalytics()->toArray())->toThrow(InvalidPlayerConfigException::class);
 });

@@ -17,7 +17,7 @@ use Hei\ScarlettPlayer\Exceptions\InvalidBeaconContextException;
  * name carrying another type, lands in $custom and is stored, never rejected,
  * because a 422 on an unknown key breaks every host that adds a custom dimension.
  *
- * Null is absent except for qoeScore: an explicit null clears an older score
+ * Null is absent except for qoeScore/qoeVersion: a null score clears an older score
  * so an access-denied view is excluded from averages.
  *
  * $server is what the host asserted about the beacon (beacons.context, or a pipeline
@@ -166,7 +166,7 @@ final readonly class BeaconPayload
     /**
      * @param  int  $timestamp  client clock, epoch milliseconds
      * @param  array<string, string|bool>  $context  known context keys present and non-null
-     * @param  array<string, int|float|string|bool|null>  $fields  known event keys, including explicit null qoeScore
+     * @param  array<string, int|float|string|bool|null>  $fields  known event keys, including explicit null qoeScore/qoeVersion
      * @param  array<string, mixed>  $custom  every key the package does not know
      * @param  string|null  $ip  the client address, only when beacons.store_ip is on
      * @param  array<string, mixed>  $server  server-owned keys, non-null values only
@@ -210,9 +210,9 @@ final readonly class BeaconPayload
                 continue;
             }
 
-            // Keep explicit null scores, but omit them from the legacy hash basis.
+            // Keep null score/version presence, but omit nulls from the legacy hash basis.
             if ($value === null) {
-                if ($key === 'qoeScore') {
+                if (in_array($key, ['qoeScore', 'qoeVersion'], true)) {
                     $fields[$key] = null;
                 }
 
@@ -362,7 +362,7 @@ final readonly class BeaconPayload
      * The beacon as stored: the browser's keys, then the server context last, so a
      * server-owned value wins a name the browser also used. What the raw event log
      * and the fake's ledger record, after any pipeline step, so a redaction reaches
-     * the raw log too. Explicit null qoeScore is retained; other null keys are left out.
+     * the raw log too. Explicit null qoeScore/qoeVersion are retained; other null keys are left out.
      *
      * @return array<string, mixed>
      */

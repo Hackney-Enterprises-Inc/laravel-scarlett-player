@@ -71,7 +71,8 @@ Schema::table('scarlett_beacon_events', function (Blueprint $table): void {
 ```
 
 Keep the existing `view_id` index. The 0.3 raw-order change has no package upgrade
-migration; republishing an already-run create migration does not alter it. The signals
+migration. Do not republish the full migration folder on an existing installation:
+Laravel normally assigns new timestamps and can create duplicate create migrations. The signals
 release adds a separate migration described in [Signals and upgrading from 0.3](#signals-and-upgrading-from-03).
 The store tolerates a missing `seq` column and continues ingesting, but cannot write the
 dedicated order key until you add it. `scarlett:doctor` warns under `beacon seq column`
@@ -105,8 +106,8 @@ recipe above.
 **Deploy the ingest first.** For tsp-web (and other existing hosts): run
 `composer update hei/laravel-scarlett-player` to 0.3.0, add the column and index, deploy
 the ingest, then move the host's `@scarlett-player/*` packages to 1.19.3. The package's
-`player.player_version` stayed **1.19.1** in package 0.3.0. The current signals work
-targets **1.20.0** and requires the additional migration described below. See
+`player.player_version` remains **1.19.1**. Signals support targets **1.20.0**,
+pending published-artifact verification, and uses the additional migration below. See
 [Compatibility](#compatibility) for the count changes to expect from player 1.19.3.
 
 ### Publish tags
@@ -114,7 +115,8 @@ targets **1.20.0** and requires the additional migration described below. See
 | Tag | What |
 |---|---|
 | `scarlett-config` | `config/scarlett-player.php` |
-| `scarlett-migrations` | The package migrations |
+| `scarlett-migrations` | All package migrations, for fresh installations only |
+| `scarlett-migrations-signals` | Only the additive signals migration, for upgrades from 0.3 |
 | `scarlett-views` | The embed page and Blade component views, to `resources/views/vendor/scarlett` |
 | `scarlett-js` | The JS initialiser, to `resources/js/vendor/scarlett-player/init.js` |
 
@@ -384,24 +386,37 @@ key on Postgres, which refuses to compare `varchar` with `integer`.
 
 #### Signals and upgrading from 0.3
 
-The player pin now targets **1.20.0**. Publish and run the new
-`0001_01_01_000005_add_signals_to_scarlett_tables.php` migration before deploying
-these queue workers or enabling the new player. It adds columns to the existing
-views and errors tables, and marks existing non-null scores as QoE v1. Fresh
-installs run it after the create migrations. Do not overwrite published create
-migrations with `--force`. The separate host-owned raw `seq` upgrade described
-below is still needed for installations predating 0.3.
+The default player pin remains **1.19.1** until the 1.20.0 npm and CDN artifacts
+are available and verified. Signals support is prepared for 1.20.0.
+
+For an existing 0.3 installation that has not run the signals migration, publish
+**only** the additive migration with the dedicated tag below. It adds columns to
+views and errors and marks existing non-null scores as QoE v1. The dedicated tag
+keeps a stable filename, so repeating this upgrade command does not publish a
+second copy. Fresh installations use `scarlett-migrations` once for all migrations.
+Do not republish that full folder on an existing host: Laravel's default timestamp
+rewriting can duplicate previously run create migrations, even without `--force`.
+The separate host-owned raw `seq` upgrade below is still needed before 0.3.
 
 ```bash
-php artisan vendor:publish --tag=scarlett-migrations
+php artisan vendor:publish --tag=scarlett-migrations-signals
 php artisan migrate
 php artisan queue:restart
+php artisan scarlett:doctor
 ```
 
-Deploy ingest first, then the 1.20.0 player when its npm and CDN artifacts are
-available. Update a published `player.player_version` override as well as module
-npm dependencies, and republish `scarlett-js` if the host uses the initialiser.
-Package defaults do not replace a host's published config or JavaScript.
+The `beacon signals columns` doctor check warns about missing columns. Ingest
+continues against older or partially upgraded schemas, skipping unavailable signal
+columns. Legacy v1 scores still aggregate. Until `qoe_version` exists, v2 and
+unknown-version scores aggregate as null to avoid contaminating the v1 series or
+migration backfill; their original values remain in the optional raw log. Column
+availability is cached per store instance: restart workers after migrating. Skipped
+measurements are not automatically replayed into the new columns.
+
+Deploy ingest and migrate first, then enable the 1.20.0 player once its npm and CDN
+artifacts are available. Update `player.player_version` and module npm dependencies
+together, and republish `scarlett-js` if the host uses the initialiser. Package
+defaults do not replace a host's published config or JavaScript.
 
 The recognized signal fields remain at the top level in the raw payload. Unknown
 keys and known names carrying wrong types still go to `custom`. Existing custom
@@ -410,12 +425,13 @@ and queued hashes, so an upgrade alone does not duplicate raw events or errors.
 
 | Signal | Persistence and merge |
 |---|---|
-| `qoeScore`, `qoeVersion` | `qoe_score` and `qoe_version` are one latest-by-timestamp measurement using `qoe_score_at`. Scores without a version are v1. Explicit null clears the score and wins same-millisecond score ties; omission leaves it unchanged, including unload beacons |
+| `qoeScore`, `qoeVersion` | `qoe_score` and `qoe_version` are one latest-by-timestamp measurement using `qoe_score_at`. Scores with no version key are v1; a present unusable version (including null or a string) has null `qoe_version` and is excluded from versioned averages. Explicit null clears the score and wins same-millisecond score ties; omission leaves it unchanged, including unload beacons |
 | `warningCount` | `warning_count`, monotonic running total; never counted from sampled error beacons |
 | `fatalErrorCategory` | `fatal_error_category`, first non-null value |
 | `errorCategory`, `errorSeverity` | `scarlett_view_errors.category` and `.severity`, retained even when raw storage is off |
 | `httpStatus`, `mediaErrorCode`, `attempts`, `retriesExhausted`, `reconnectExhausted`, `timedOut` | Corresponding snake_case columns on `scarlett_view_errors`; absent details stay null |
-| `segmentCount`, `segmentBytes`, `segmentLoadAvgMs`, `segmentLoadMaxMs`, `segmentErrors`, `segmentThroughputBps`, `decodedFrames`, `droppedFrames` | Corresponding snake_case view columns, latest reported value with a per-column timestamp; every received interval also remains in the optional raw log |
+| `segmentCount`, `segmentBytes`, `segmentLoadAvgMs`, `segmentLoadMaxMs`, `segmentErrors`, `segmentThroughputBps` | One latest interval, guarded by `segment_count_at`. A valid `segmentCount` replaces the group; missing members become null, including omitted throughput in audio-only intervals. Without a valid count the group stays unchanged |
+| `decodedFrames`, `droppedFrames` | Latest reported frame values, with individual timestamps; received intervals also remain in the optional raw log |
 | `pageUrl`, `referrerOrigin`, `pageLoadToInitMs`, `playerInitMs` | Corresponding snake_case view columns, set once when present |
 | `anonymous` | Boolean view column, true wins; absence stays null |
 
@@ -443,7 +459,10 @@ denials has a null average. Compare QoE v1 and v2 as separate series.
 
 `player.analytics_anonymous` (`SCARLETT_ANALYTICS_ANONYMOUS`) and
 `player.analytics_respect_do_not_track` (`SCARLETT_ANALYTICS_RESPECT_DO_NOT_TRACK`)
-default to false. They apply in module mode and the 1.20.0 Full embed build,
+default to false. Boolean values and environment strings `1`/`on`/`yes` or
+`0`/`off`/`no` are accepted; invalid values fail configuration validation. Enabling
+either flag requires a player pin of at least 1.20.0 in both modes; older pins
+raise an exception. They apply in module mode and the 1.20.0 Full embed build,
 including the package's embed page. They do not turn analytics on by themselves.
 Override them per player:
 
@@ -1146,7 +1165,7 @@ attribute. What each mode can carry:
 | src, poster, autoplay, muted, loop, start time | yes | yes |
 | brand colour / brand text colour | yes | yes; `data-brand-color`, `data-brand-text-color` |
 | analytics (beaconUrl, videoId, apiKey) | yes; plus `headers()` in the initialiser | yes; `data-analytics-*`, no extra headers |
-| analytics anonymous IDs and DNT/GPC | yes; `anonymous`, `respectDoNotTrack`; `beforeSend` through JavaScript options | yes, from player 1.20.0; `data-analytics-anonymous`, `data-analytics-respect-dnt`; Full build only |
+| analytics anonymous IDs and DNT/GPC | yes, from player 1.20.0; `anonymous`, `respectDoNotTrack`; `beforeSend` through JavaScript options | yes, from player 1.20.0; `data-analytics-anonymous`, `data-analytics-respect-dnt`; Full build only |
 | analytics live flag (isLive from the MediaSource) | yes; the initialiser passes it to the analytics plugin, so viewStart is right before the playlist loads | **no**; the embed has no attribute for it; from player 1.18 viewStart carries null before the playlist loads, which the ingest treats as absent, so the view is marked live by a later beacon: late, never wrong |
 | analytics heartbeat interval (`player.heartbeat_interval`) | yes | **no**; no `data-analytics-heartbeat-interval` attribute; the player default applies |
 | share URL + embed base URL | yes | yes; `data-share-url`, `data-embed-base-url` |
@@ -1159,7 +1178,7 @@ This table is generated from `Hei\ScarlettPlayer\Player\FeatureMatrix`, the same
 builder enforces (`FeatureMatrix::toMarkdown()`; a test fails if the two differ). A cell
 reading "from player X" is checked against `player.player_version`: below it, asking for that
 feature in embed mode throws `UnsupportedInEmbedMode`, which names the module-mode
-alternative. On the targeted 1.20.0 (from 1.17.0), embed mode carries clips, chapters and captions; chapters
+alternative. On the default 1.19.1 (from 1.17.0), embed mode carries clips, chapters and captions; chapters
 and clips need the embed's addon files, which the component loads for you.
 
 ### Config builder
@@ -1487,6 +1506,7 @@ Prints one row per check and exits non-zero when any check fails (warnings alone
 | embed bundle | `player.mode` is `embed` and the bundle URL cannot be built (fail), or only the embed page would need it (warn) |
 | embed domains | an `embed.allowed_domains` entry is not a host name (fail; otherwise every embed page request fails) |
 | beacon ip column | `beacons.store_ip` is on but `scarlett_views.ip_address` does not exist, because it is created only when `store_ip` was on at migrate time (fail); the table is missing or cannot be inspected (warn) |
+| beacon signals columns | missing signal columns on views/errors (warn); passes with the complete schema or a custom store; use the signals-only upgrade tag and restart workers |
 | beacon seq column | raw-event storage is on but `scarlett_beacon_events.seq` is missing, or the table cannot be inspected (warn); passes when the column exists or `beacons.store_raw_events` is off |
 | beacon context | `beacons.context` is set but is not a class implementing `ResolvesBeaconContext`, or `scarlett_views.server` does not exist, on a table migrated by 0.1 (fail); the table is missing or cannot be inspected (warn) |
 | beacon route | `routes.beacons` is on but `scarlett.beacons.store` is not registered, e.g. a stale route cache (fail); the route is registered while `beacons.enabled` is off (warn) |
@@ -1531,7 +1551,7 @@ falls through to the bound resolver.
 | `v0.2.0` | 1.17.x, pinned at 1.17.0 (`player.player_version`) | the 1.17.0 set, captured (removed in `v0.2.1`) | The same captured fixture set as `v0.1.0`, unchanged. Embed mode now carries chapters, captions and clips on 1.17.0, with the `embed.addon.chapters` and `embed.addon.clips` addon files beside the bundle |
 | `v0.2.1` | 1.19.x, pinned at 1.19.1 (`player.player_version`) | `tests/Fixtures/wire/1.19.1/`, captured | Recaptured by the player repo's harness against the `v1.19.1` checkout (21 fixtures, a 26-beacon session sequence, 14 harness assertions passing); the same keys, events and exit types as 1.17.0, and the harness has no video-change scenario, so the 1.19 new-view boundary is not in the set. Embed mode carries chapters, captions and clips (from player 1.17.0), with the `embed.addon.chapters` and `embed.addon.clips` addon files beside the bundle; the browser test runs the npm 1.19.1 embed bundle |
 | `v0.3.0` | Still pinned at 1.19.1; additive ingest support for the 1.19.3 source contract | 1.19.1 captured set retained; `tests/Fixtures/wire/1.19.3/` derived (recapture owed) | Knows `beaconSeq` and `seekSource`; nullable raw `seq` orders timestamp ties. On upgrading the player to 1.19.3, `rebuffer_count` drops sharply, mostly on Safari: `waiting` under the default 250 ms `rebufferGraceMs` no longer counts; `rebufferStart` is sent about 250 ms after the stall began, while `rebuffer_ms` still counts from the first `waiting`. `seek_count` and `seeking` rows rise because progress-bar, keyboard, replay and native-control seeks were not sent before 1.19.3. Both are breaks in continuity across the player upgrade, not ingest bugs. No player repin in this package release |
-| Unreleased | Target pin 1.20.0; QoE v1 and v2 ingest | `tests/Fixtures/wire/signals-candidate/`, real browser captures from the local signals source, still labeled 1.19.3 by its package metadata | Structured errors, nullable scores, interval metrics, page context and privacy options. Published 1.20.0 artifact verification and recapture remain pending; npm returned 404 during preparation. Batching remains off and unsupported |
+| Unreleased | Default pin 1.19.1; prepared for 1.20.0 signals and QoE v1/v2 ingest | `tests/Fixtures/wire/signals-candidate/`, real browser captures from the local signals source, still labeled 1.19.3 by its package metadata | Structured errors, nullable scores, interval metrics, page context and privacy options. Published 1.20.0 artifact verification and recapture remain pending; npm returned 404 during preparation. Batching remains off and unsupported |
 
 Player 1.19.3's `rebufferGraceMs: 0` restores immediate rebuffer counting. Its
 `rebufferStart.timestamp` is the send time, not backdated to the first `waiting`;
@@ -1555,7 +1575,7 @@ byte from the published 1.19.1 dist, because the capture harness has no share sc
 
 The embed bundle location follows `player.embed_bundle`, a template defaulting to
 `{cdn_url}/v{player_version}/embed.js`: the player CDN serves one directory per release
-(`v1.20.0/`) and no `/latest/` alias yet, so the embed bundle is always the pinned version.
+(for example, `v1.19.1/`) and no `/latest/` alias yet, so the embed bundle is always the pinned version.
 
 ## Development
 

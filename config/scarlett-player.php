@@ -365,7 +365,7 @@ return [
         /**
          * The @scarlett-player/* version whose wire contracts this app targets.
          */
-        'player_version' => env('SCARLETT_PLAYER_VERSION', '1.20.0'),
+        'player_version' => env('SCARLETT_PLAYER_VERSION', '1.19.1'),
 
         /**
          * Where the embed bundle lives, as a template: {cdn_url} and {player_version}

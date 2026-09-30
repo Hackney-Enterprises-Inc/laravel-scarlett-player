@@ -744,7 +744,12 @@ describe('raw beacon order', function (): void {
             return true;
         });
         $connection = Mockery::mock(DB::connection())->makePartial();
-        $connection->shouldReceive('getSchemaBuilder')->once()->andReturn($schema);
+        $schema->shouldReceive('getColumnListing')->with('scarlett_views')->once()->andReturnUsing(function (): array {
+            expect(DB::transactionLevel())->toBe(0);
+
+            return Schema::getColumnListing('scarlett_views');
+        });
+        $connection->shouldReceive('getSchemaBuilder')->andReturn($schema);
         $database = Mockery::mock(ConnectionResolverInterface::class);
         $database->shouldReceive('connection')->andReturn($connection);
         $store = new EloquentBeaconStore($database, config(), app('events'), app());

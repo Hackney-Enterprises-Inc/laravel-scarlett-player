@@ -131,3 +131,25 @@ it('keeps access-denied null over a scored heartbeat in the same millisecond', f
     $view = DB::table('scarlett_views')->sole();
     expect($view->qoe_score)->toBeNull()->and((int) $view->qoe_version)->toBe(2);
 })->with([false, true]);
+
+it('keeps malformed or explicit null score versions out of the v1 series', function (mixed $version): void {
+    ($this->deliverSignal)('heartbeat', 0, ['qoeScore' => 90]);
+    ($this->deliverSignal)('heartbeat', 10, ['qoeScore' => 50, 'qoeVersion' => $version]);
+    $view = DB::table('scarlett_views')->sole();
+    expect((float) $view->qoe_score)->toBe(50.0)->and($view->qoe_version)->toBeNull();
+    expect(DB::table('scarlett_views')->where('qoe_version', 1)->avg('qoe_score'))->toBeNull();
+})->with(['string' => '2', 'bool' => false, 'object' => [['v' => 2]], 'null' => null, 'zero' => 0, 'negative' => -2, 'fraction' => 2.5]);
+
+it('clears unavailable throughput when an audio-only segment interval arrives in either order', function (bool $reverse): void {
+    $events = [
+        ['heartbeat', 10, ['segmentCount' => 4, 'segmentBytes' => 400, 'segmentThroughputBps' => 8000]],
+        ['heartbeat', 20, ['segmentCount' => 2, 'segmentBytes' => 200, 'segmentLoadAvgMs' => 5, 'segmentLoadMaxMs' => 6, 'segmentErrors' => 0]],
+    ];
+    foreach ($reverse ? array_reverse($events) : $events as $event) {
+        ($this->deliverSignal)(...$event);
+    }
+    ($this->deliverSignal)('heartbeat', 30, ['warningCount' => 0]);
+    $view = DB::table('scarlett_views')->sole();
+    expect((float) $view->segment_count)->toBe(2.0)->and((float) $view->segment_bytes)->toBe(200.0)
+        ->and($view->segment_throughput_bps)->toBeNull();
+})->with([false, true]);

@@ -55,7 +55,7 @@ final class FeatureMatrix
         ],
         'analytics_privacy' => [
             'label' => 'analytics anonymous IDs and DNT/GPC',
-            'module' => true,
+            'module' => '1.20.0',
             'embed' => '1.20.0',
             'module_note' => '`anonymous`, `respectDoNotTrack`; `beforeSend` through JavaScript options',
             'embed_note' => '`data-analytics-anonymous`, `data-analytics-respect-dnt`; Full build only',

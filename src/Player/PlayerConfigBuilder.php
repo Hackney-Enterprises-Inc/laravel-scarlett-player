@@ -651,9 +651,14 @@ class PlayerConfigBuilder implements Arrayable, JsonSerializable
         ];
 
         foreach ($privacy as $key => $value) {
-            if (! is_bool($value)) {
+            $parsed = is_bool($value) ? $value : (is_string($value) || is_int($value)
+                ? filter_var($value, FILTER_VALIDATE_BOOL, FILTER_NULL_ON_FAILURE) : null);
+
+            if ($parsed === null) {
                 throw new InvalidPlayerConfigException("Analytics {$key} must be a boolean.");
             }
+
+            $privacy[$key] = $parsed;
         }
 
         if (in_array(true, $privacy, true)) {
@@ -684,6 +689,10 @@ class PlayerConfigBuilder implements Arrayable, JsonSerializable
     protected function assertSupported(string $feature): void
     {
         if ($this->mode !== FeatureMatrix::EMBED) {
+            if (! FeatureMatrix::supports($feature, $this->mode, $this->playerVersion())) {
+                throw new InvalidPlayerConfigException("Scarlett {$feature} requires player 1.20.0 or later; configured player is {$this->playerVersion()}.");
+            }
+
             return;
         }
 
