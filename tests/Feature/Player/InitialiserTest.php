@@ -112,6 +112,8 @@ it('turns a full module config into core options and plugins', function (): void
             'isLive' => false,
             'apiKey' => 'test-beacon-key',
             'videoTitle' => 'Main event',
+            'anonymous' => false,
+            'respectDoNotTrack' => false,
         ])
         ->and($plugins['clips']['config'])->toBe([
             'mediaId' => 'video-1',
@@ -222,4 +224,18 @@ it('lets a page-wide analytics option beat the configured heartbeat interval', f
 
     expect($result['created'])->toBe(1)
         ->and($analytics['config']['heartbeatInterval'])->toBe(30000);
+});
+
+it('passes privacy defaults from the PHP builder into the module analytics plugin', function (): void {
+    $result = runInitialiser(ScarlettPlayer::for('video-1')->analyticsPrivacy(true, true)->withAnalytics()->toArray());
+    $analytics = collect($result['options']['plugins'])->firstWhere('factory', 'analytics');
+    expect($analytics['config'])->toMatchArray(['anonymous' => true, 'respectDoNotTrack' => true])
+        ->and($analytics['config'])->not->toHaveKey('batch');
+});
+
+it('forwards per-page privacy overrides and the beforeSend callback without serialization', function (): void {
+    $result = runPage(ScarlettPlayer::for('video-1')->withAnalytics()->analyticsPrivacy(true, false)->toArray(), 'privacy');
+    $analytics = collect($result['plugins'])->firstWhere('factory', 'analytics')['config'];
+    expect($analytics)->toMatchArray(['anonymous' => false, 'respectDoNotTrack' => true, 'playerInitTime' => 1234])
+        ->and($analytics['beforeSend'])->toBe(['kept' => ['event' => 'heartbeat', 'redacted' => true], 'dropped' => null]);
 });

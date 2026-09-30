@@ -100,7 +100,7 @@ it('replaces custom dimensions and the address without touching anything else', 
         ->and($payload->custom)->toBe(['email' => 'viewer@example.com']);
 });
 
-it('knows every key the analytics plugin sends through player 1.19.3', function (): void {
+it('knows every key the analytics plugin sends through player 1.20.0', function (): void {
     // index.ts sendBeacon()/sendUnloadBeacon() base keys, then every data object
     // the plugin passes (heartbeat, videoStart, rebufferEnd, pause, rebufferStart,
     // seeking, error, qualityChange, both viewEnd variants, the latency summary).
@@ -113,6 +113,11 @@ it('knows every key the analytics plugin sends through player 1.19.3', function 
         'qualityChanges', 'pauseCount', 'pauseDuration', 'errorCount', 'exitType',
         'completionRate', 'liveLatencySamples', 'liveLatencyMean', 'liveLatencyP95',
         'liveLatencyMax', 'lowLatency', 'beaconSeq', 'seekSource',
+        'anonymous', 'pageUrl', 'referrerOrigin', 'pageLoadToInitMs', 'playerInitMs',
+        'qoeVersion', 'errorCategory', 'errorSeverity', 'httpStatus', 'mediaErrorCode',
+        'attempts', 'retriesExhausted', 'reconnectExhausted', 'timedOut', 'warningCount',
+        'fatalErrorCategory', 'segmentCount', 'segmentBytes', 'segmentLoadAvgMs',
+        'segmentLoadMaxMs', 'segmentErrors', 'segmentThroughputBps', 'decodedFrames', 'droppedFrames',
     ];
 
     expect(array_keys([...BeaconPayload::CONTEXT, ...BeaconPayload::FIELDS]))->toEqualCanonicalizing($shipped);
@@ -488,4 +493,32 @@ describe('a job queued before the upgrade', function (): void {
         expect($restored)->toEqual($payload)
             ->and($restored->bodyHash)->toBe($payload->bodyHash);
     });
+});
+
+it('recognizes signal types, preserving wrong types as custom and explicit null scores through the queue', function (): void {
+    $payload = BeaconPayload::fromArray(Beacons::body('viewEnd', 0, [
+        'qoeScore' => null, 'qoeVersion' => 2, 'anonymous' => true, 'timedOut' => false,
+        'httpStatus' => '403', 'segmentCount' => ['host' => 'dimension'], 'pageUrl' => 42,
+    ]));
+    $restored = unserialize(serialize($payload));
+    expect($restored->has('qoeScore'))->toBeTrue()->and($restored->get('qoeScore'))->toBeNull()
+        ->and($restored->get('qoeVersion'))->toBe(2)->and($restored->get('anonymous'))->toBeTrue()
+        ->and($restored->get('timedOut'))->toBeFalse()
+        ->and($restored->custom)->toBe(['httpStatus' => '403', 'segmentCount' => ['host' => 'dimension'], 'pageUrl' => 42])
+        ->and($restored->withIp(null)->withCustom([])->toArray())->toHaveKey('qoeScore');
+});
+
+it('preserves the legacy hash and custom interleaving for all signal promotions', function (): void {
+    $body = Beacons::body('heartbeat', 0, [
+        'tenant' => 'a', 'qoeVersion' => 2, 'qoeScore' => 50, 'pageUrl' => 'https://example.test/watch',
+        'other' => 1, 'anonymous' => true, 'warningCount' => 2, 'decodedFrames' => 10,
+        'errorCategory' => 'network', 'timedOut' => false,
+    ]);
+    $legacyKnown = array_intersect_key($body, array_flip(['qoeScore']));
+    $legacyCustom = array_diff_key($body, array_flip([...BeaconPayload::IDENTITY, ...array_keys(BeaconPayload::CONTEXT), 'qoeScore']));
+    $legacyBody = array_replace(array_intersect_key($body, array_flip(BeaconPayload::IDENTITY)), array_intersect_key($body, BeaconPayload::CONTEXT), $legacyKnown, $legacyCustom);
+    $payload = BeaconPayload::fromArray($body);
+    expect($payload->bodyHash)->toBe(sha1(json_encode($legacyBody, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)))
+        ->and($payload->custom)->toBe(['tenant' => 'a', 'other' => 1])
+        ->and($payload->withServer(['anonymous' => null])->withCustom([])->bodyHash)->toBe($payload->bodyHash);
 });

@@ -4,6 +4,21 @@ All notable changes to `hei/laravel-scarlett-player` are documented here. The fo
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Signals ingest recognizes structured error details, `qoeVersion`, explicit nullable `qoeScore`, warning counts, segment/frame intervals, page context and `anonymous`. Wrong types remain custom dimensions. The additive signals migration adds view/error columns and backfills existing scored views as QoE v1; publish and run it before deploying the new workers.
+- Versioned QoE aggregation: score and version share a timestamp, explicit null clears an earlier score, and older beacons cannot restore a score cleared by a newer access denial. README averages separate v1/v2 and exclude null without dropping real zeroes.
+- Latest reported segment/frame interval columns, monotonic warning counts, structured error persistence even with raw storage off, and page/anonymous context storage.
+- `PlayerConfigBuilder::analyticsPrivacy()`, Blade `anonymous` and `respect-do-not-track` options, and matching player config/environment defaults. Module and Full embed integrations forward privacy flags; JavaScript callback options remain available through the module initialiser.
+- Real browser signals-candidate captures and ingestion regressions, including duplicate delivery, error details, null scores and optional batch-envelope rejection. Candidate source metadata still says 1.19.3; published 1.20.0 recapture remains pending.
+
+### Changed
+
+- Target `player.player_version` 1.20.0. Published artifact verification remains pending because npm returned 404 during preparation. Batching remains disabled and unsupported; do not enable it against this endpoint.
+- New field promotions retain the legacy normalized deduplication hash and authoritative queued hashes.
+
 ## [0.3.0] - 2026-09-29
 
 ### Added

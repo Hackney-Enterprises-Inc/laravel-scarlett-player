@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Hei\ScarlettPlayer\Exceptions\ScarlettPlayerException;
 use Hei\ScarlettPlayer\Exceptions\UnsupportedInEmbedMode;
 use Hei\ScarlettPlayer\Facades\ScarlettPlayer;
 use Hei\ScarlettPlayer\Tests\Fixtures\Provider\ArrayResolver;
@@ -89,7 +90,7 @@ it('renders embed mode as data attributes and the pinned bundle', function (): v
 });
 
 it('emits only data-* names the embed README documents', function (): void {
-    $readme = (string) file_get_contents(EMBED_README);
+    $readme = (string) file_get_contents(EMBED_README).file_get_contents(__DIR__.'/../../Fixtures/embed/attributes/signals-candidate/README.md');
     $html = (string) $this->blade(
         '<x-scarlett-player media="video-1" mode="embed" autoplay muted loop :controls="false" :start-time="5" title="T" poster="https://img.example.test/p.jpg" brand-color="#111" brand-text-color="#fff" analytics share-url="https://host.test/watch/1" />'
     );
@@ -209,7 +210,7 @@ it('loads the chapters and clips addons after the bundle, once each, in embed mo
         ->and($html)->toContain('data-chapters="[');
 
     foreach (['data-clips-endpoint', 'data-clips-csrf', 'data-clips-media-id', 'data-captions', 'data-chapters'] as $name) {
-        expect((string) file_get_contents(EMBED_README))->toContain("`{$name}`");
+        expect((string) file_get_contents(EMBED_README).file_get_contents(__DIR__.'/../../Fixtures/embed/attributes/signals-candidate/README.md'))->toContain("`{$name}`");
     }
 });
 
@@ -228,4 +229,32 @@ it('loads the UMD addons as classic scripts beside a UMD bundle', function (): v
 
     expect($html)->toContain('embed.addon.clips.umd.cjs" nonce="n0nce"></script>')
         ->and($html)->not->toContain('type="module"');
+});
+
+it('forwards privacy flags through module and embed Blade components with explicit false overrides', function (string $mode): void {
+    config()->set('scarlett-player.player.analytics_anonymous', true);
+    config()->set('scarlett-player.player.analytics_respect_do_not_track', true);
+    $html = (string) $this->blade('<x-scarlett-player media="video-1" :mode="$mode" analytics :anonymous="false" respect-do-not-track />', ['mode' => $mode]);
+    if ($mode === 'module') {
+        expect(renderedConfig($html)['analytics'])->toMatchArray(['anonymous' => false, 'respectDoNotTrack' => true]);
+    } else {
+        expect($html)->toContain('data-analytics-anonymous="false"', 'data-analytics-respect-dnt="true"');
+    }
+    expect($html)->not->toContain('data-analytics-batch');
+})->with(['module', 'embed']);
+
+it('refuses requested privacy options on older embed versions and non-Full builds', function (string $version, string $bundle): void {
+    config()->set('scarlett-player.player.player_version', $version);
+    config()->set('scarlett-player.player.embed_bundle', $bundle);
+    expect(fn () => ScarlettPlayer::for('video-1')->mode('embed')->withAnalytics()->analyticsPrivacy(true, true)->toDataAttributes())
+        ->toThrow(ScarlettPlayerException::class);
+})->with([
+    ['1.19.1', '{cdn_url}/v{player_version}/embed.js'],
+    ['1.20.0', '{cdn_url}/v{player_version}/embed.audio.js'],
+    ['1.20.0', '{cdn_url}/v{player_version}/embed.video.umd.cjs'],
+]);
+
+it('does not enable analytics merely because privacy options were supplied', function (): void {
+    $html = (string) $this->blade('<x-scarlett-player media="video-1" mode="embed" anonymous respect-do-not-track />');
+    expect($html)->not->toContain('data-analytics-');
 });

@@ -33,7 +33,7 @@ it('merges the package config with the sketch defaults', function (): void {
         ->and(config('scarlett-player.beacons.throttle'))->toBe('600,1')
         ->and(config('scarlett-player.clips.queue'))->toBe('scarlett-clips')
         ->and(config('scarlett-player.clips.generators.local-ffmpeg.timeout'))->toBe(300)
-        ->and(config('scarlett-player.player.player_version'))->toBe('1.19.1')
+        ->and(config('scarlett-player.player.player_version'))->toBe('1.20.0')
         ->and(config('scarlett-player.embed.unsigned_params'))->toBe(['startTime', 'shareUrl', 'autoplay', 'muted']);
 });
 

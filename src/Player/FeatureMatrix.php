@@ -53,6 +53,13 @@ final class FeatureMatrix
             'module_note' => 'plus `headers()` in the initialiser',
             'embed_note' => '`data-analytics-*`, no extra headers',
         ],
+        'analytics_privacy' => [
+            'label' => 'analytics anonymous IDs and DNT/GPC',
+            'module' => true,
+            'embed' => '1.20.0',
+            'module_note' => '`anonymous`, `respectDoNotTrack`; `beforeSend` through JavaScript options',
+            'embed_note' => '`data-analytics-anonymous`, `data-analytics-respect-dnt`; Full build only',
+        ],
         'analytics_live' => [
             'label' => 'analytics live flag (isLive from the MediaSource)',
             'module' => true,

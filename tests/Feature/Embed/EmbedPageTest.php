@@ -270,3 +270,12 @@ it('keeps only plain-ASCII shareUrls on an allowed domain from the fuzzed payloa
         ? $response->assertSee('data-share-url="'.e($payload).'"', false)
         : $response->assertDontSee('data-share-url', false);
 })->with(shareUrlPayloads());
+
+it('uses the configured privacy flags on the package embed page', function (): void {
+    config()->set('scarlett-player.player.analytics_anonymous', true);
+    config()->set('scarlett-player.player.analytics_respect_do_not_track', true);
+    $this->get('/v/video-1')->assertOk()
+        ->assertSee('data-analytics-anonymous="true"', false)
+        ->assertSee('data-analytics-respect-dnt="true"', false)
+        ->assertDontSee('data-analytics-batch', false);
+});

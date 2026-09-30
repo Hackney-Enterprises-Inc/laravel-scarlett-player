@@ -33,6 +33,10 @@ class PlayerConfigBuilder implements Arrayable, JsonSerializable
     /** The host config schema version toArray() emits. */
     public const SCHEMA_VERSION = 1;
 
+    protected ?bool $analyticsAnonymous = null;
+
+    protected ?bool $analyticsRespectDoNotTrack = null;
+
     /**
      * The longest heartbeat interval, in milliseconds: the largest delay browsers honour
      * in setInterval() (a signed 32-bit int). Anything longer fires almost immediately.
@@ -222,6 +226,15 @@ class PlayerConfigBuilder implements Arrayable, JsonSerializable
             'videoTitle' => $this->title,
             'isLive' => $this->media->isLive,
         ];
+
+        return $this;
+    }
+
+    /** Override per-view identity and browser privacy signals for this player. */
+    public function analyticsPrivacy(?bool $anonymous = null, ?bool $respectDoNotTrack = null): static
+    {
+        $this->analyticsAnonymous = $anonymous;
+        $this->analyticsRespectDoNotTrack = $respectDoNotTrack;
 
         return $this;
     }
@@ -488,6 +501,8 @@ class PlayerConfigBuilder implements Arrayable, JsonSerializable
      */
     public function toDataAttributes(): array
     {
+        $analytics = $this->analyticsConfig();
+
         $attributes = [
             'data-scarlett-player' => '',
             'data-src' => $this->media->playbackUrl,
@@ -505,6 +520,8 @@ class PlayerConfigBuilder implements Arrayable, JsonSerializable
             'data-analytics-beacon-url' => $this->analytics['beaconUrl'] ?? null,
             'data-analytics-video-id' => $this->analytics['videoId'] ?? null,
             'data-analytics-api-key' => $this->analytics['apiKey'] ?? null,
+            'data-analytics-anonymous' => isset($analytics['anonymous']) ? ($analytics['anonymous'] ? 'true' : 'false') : null,
+            'data-analytics-respect-dnt' => isset($analytics['respectDoNotTrack']) ? ($analytics['respectDoNotTrack'] ? 'true' : 'false') : null,
             // No isLive or heartbeat interval attribute: the embed README documents
             // neither (FeatureMatrix 'analytics_live', 'analytics_heartbeat'). Add them
             // here when the player ships them.
@@ -623,18 +640,42 @@ class PlayerConfigBuilder implements Arrayable, JsonSerializable
      */
     protected function analyticsConfig(): ?array
     {
-        if ($this->analytics === null || ! FeatureMatrix::supports('analytics_heartbeat', $this->mode, $this->playerVersion())) {
-            return $this->analytics;
+        if ($this->analytics === null) {
+            return null;
+        }
+
+        $analytics = $this->analytics;
+        $privacy = [
+            'anonymous' => $this->analyticsAnonymous ?? $this->config->get('scarlett-player.player.analytics_anonymous', false),
+            'respectDoNotTrack' => $this->analyticsRespectDoNotTrack ?? $this->config->get('scarlett-player.player.analytics_respect_do_not_track', false),
+        ];
+
+        foreach ($privacy as $key => $value) {
+            if (! is_bool($value)) {
+                throw new InvalidPlayerConfigException("Analytics {$key} must be a boolean.");
+            }
+        }
+
+        if (in_array(true, $privacy, true)) {
+            $this->assertSupported('analytics_privacy');
+        }
+
+        if (FeatureMatrix::supports('analytics_privacy', $this->mode, $this->playerVersion())) {
+            $analytics = [...$analytics, ...$privacy];
+        }
+
+        if (! FeatureMatrix::supports('analytics_heartbeat', $this->mode, $this->playerVersion())) {
+            return $analytics;
         }
 
         $seconds = $this->heartbeatInterval
             ?? self::heartbeatSeconds($this->config->get('scarlett-player.player.heartbeat_interval'));
 
         if ($seconds === null) {
-            return $this->analytics;
+            return $analytics;
         }
 
-        return [...$this->analytics, 'heartbeatInterval' => (int) round($seconds * 1000)];
+        return [...$analytics, 'heartbeatInterval' => (int) round($seconds * 1000)];
     }
 
     /**
@@ -651,6 +692,10 @@ class PlayerConfigBuilder implements Arrayable, JsonSerializable
         }
 
         $build = $this->embedBundleFile();
+
+        if ($feature === 'analytics_privacy' && preg_match('/^embed\.(audio|video)\./i', $build)) {
+            throw new InvalidPlayerConfigException('Analytics privacy requires the Full embed build (embed.js or embed.umd.cjs), or module mode.');
+        }
 
         if (in_array($feature, FeatureMatrix::VIDEO_BUILD_ONLY, true) && str_starts_with(strtolower($build), 'embed.audio')) {
             throw new UnsupportedInEmbedMode($feature, $this->playerVersion(), $build);

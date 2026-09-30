@@ -52,7 +52,14 @@ if (scenario === 'heartbeat') {
   hostOptions.analytics.heartbeatInterval = 30000;
 }
 
-if (scenario === 'inline' || scenario === 'remove-csrf' || scenario === 'heartbeat') {
+if (scenario === 'privacy') {
+  hostOptions.analytics.anonymous = false;
+  hostOptions.analytics.respectDoNotTrack = true;
+  hostOptions.analytics.playerInitTime = 1234;
+  hostOptions.analytics.beforeSend = (payload) => payload.drop ? null : { ...payload, redacted: true };
+}
+
+if (scenario === 'inline' || scenario === 'remove-csrf' || scenario === 'heartbeat' || scenario === 'privacy') {
   window.scarlettPlayerOptions = hostOptions;
   await import(pathToFileURL(initPath).href);
   // The component's inline script.
@@ -83,6 +90,7 @@ const plugins = await Promise.all((out?.plugins ?? []).map(async (plugin) => {
     if (typeof config.endpoint.headers === 'function') config.endpoint.headers = { called: await config.endpoint.headers() };
   }
   if (typeof config.headers === 'function') config.headers = { called: await config.headers() };
+  if (typeof config.beforeSend === 'function') config.beforeSend = { kept: config.beforeSend({ event: 'heartbeat' }), dropped: config.beforeSend({ drop: true }) };
   return { factory: plugin.factory, config };
 }));
 
