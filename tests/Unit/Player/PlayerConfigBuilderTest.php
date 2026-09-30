@@ -49,7 +49,7 @@ it('emits schema version 1 with the media source and defaults', function (): voi
     expect($config)->toMatchArray([
         'scarlettConfigVersion' => 1,
         'mode' => 'module',
-        'playerVersion' => '1.19.1',   // the shipped pin
+        'playerVersion' => '1.19.1',   // the validated default
         'mediaId' => 'video-1',
         'source' => ['src' => 'https://media.example.test/video-1.m3u8', 'isLive' => false, 'duration' => 120.0],
         'poster' => null,
@@ -322,7 +322,7 @@ it('maps to embed data attributes using only README names', function (): void {
     ]);
 
     // The published embed README for the pinned player (tests/Fixtures/embed/attributes/).
-    $readme = (string) file_get_contents(__DIR__.'/../../Fixtures/embed/attributes/1.19.1/README.md');
+    $readme = (string) file_get_contents(__DIR__.'/../../Fixtures/embed/attributes/1.19.1/README.md').file_get_contents(__DIR__.'/../../Fixtures/embed/attributes/signals-candidate/README.md');
 
     foreach (array_keys($attributes) as $name) {
         expect($readme)->toContain("`{$name}`");
@@ -455,7 +455,7 @@ it('emits clips, chapters and captions as the embed README attributes, in the mo
         ->and(json_decode($attributes['data-captions'], true))->toEqual($module['captions']['sources'])
         ->and(json_decode($attributes['data-captions'], true)[0])->toBe(['language' => 'en', 'label' => 'English', 'src' => 'https://cdn.example.test/en.vtt', 'default' => true]);
 
-    $readme = (string) file_get_contents(__DIR__.'/../../Fixtures/embed/attributes/1.19.1/README.md');
+    $readme = (string) file_get_contents(__DIR__.'/../../Fixtures/embed/attributes/1.19.1/README.md').file_get_contents(__DIR__.'/../../Fixtures/embed/attributes/signals-candidate/README.md');
 
     foreach (array_keys($attributes) as $name) {
         expect($readme)->toContain("`{$name}`");
@@ -525,4 +525,30 @@ it('still builds analytics and share on the Audio build', function (): void {
     } catch (UnsupportedInEmbedMode $e) {
         expect($e->build)->toBe('embed.audio.umd.cjs')->and($e->feature)->toBe('captions');
     }
+});
+
+it('refuses enabled privacy on module and embed players before 1.20.0', function (string $mode, string $version, string $key): void {
+    config()->set('scarlett-player.player.player_version', $version);
+    config()->set('scarlett-player.player.cdn_url', 'https://cdn.example.test/scarlett-player');
+    config()->set('scarlett-player.player.'.$key, true);
+    expect(fn () => ScarlettPlayer::for('video-1')->mode($mode)->withAnalytics()->toArray())
+        ->toThrow(ScarlettPlayerException::class);
+})->with(['module', 'embed'])->with(['1.19.1', '1.19.3'])->with(['analytics_anonymous', 'analytics_respect_do_not_track']);
+
+it('parses boolean environment-style privacy values in either integration mode', function (string $mode, mixed $value, bool $expected): void {
+    config()->set('scarlett-player.player.player_version', '1.20.0');
+    config()->set('scarlett-player.player.cdn_url', 'https://cdn.example.test/scarlett-player');
+    config()->set('scarlett-player.player.analytics_anonymous', $value);
+    config()->set('scarlett-player.player.analytics_respect_do_not_track', $value);
+    $analytics = ScarlettPlayer::for('video-1')->mode($mode)->withAnalytics()->toArray()['analytics'];
+    expect($analytics['anonymous'])->toBe($expected)->and($analytics['respectDoNotTrack'])->toBe($expected);
+})->with(['module', 'embed'])->with([
+    ['1', true], ['on', true], ['yes', true], [1, true], ['true', true],
+    ['0', false], ['off', false], ['no', false], [0, false], ['false', false],
+]);
+
+it('rejects malformed privacy values instead of silently disabling privacy', function (): void {
+    config()->set('scarlett-player.player.player_version', '1.20.0');
+    config()->set('scarlett-player.player.analytics_respect_do_not_track', 'sometimes');
+    expect(fn () => ScarlettPlayer::for('video-1')->withAnalytics()->toArray())->toThrow(InvalidPlayerConfigException::class);
 });

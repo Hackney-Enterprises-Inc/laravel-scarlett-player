@@ -1,0 +1,59 @@
+{
+  "fixture": {
+    "player": "1.19.3",
+    "capturedAt": "2026-09-30T12:57:55.695Z",
+    "harness": "scripts/capture-wire-fixtures.mjs",
+    "chromium": "151.0.7922.34",
+    "node": "v24.20.0",
+    "event": "videoStart",
+    "transport": "fetch",
+    "variant": null,
+    "scenario": "full-session",
+    "receivedAt": "2026-09-30T12:57:56.061Z"
+  },
+  "request": {
+    "method": "POST",
+    "path": "/api/scarlett/beacons",
+    "query": {},
+    "headers": {
+      "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.7922.34 Safari/537.36",
+      "sec-ch-ua-platform": "\"macOS\"",
+      "x-wire-token": "per-beacon",
+      "sec-ch-ua": "\"Not=A?Brand\";v=\"99\", \"HeadlessChrome\";v=\"151\", \"Chromium\";v=\"151\"",
+      "content-type": "application/json",
+      "x-api-key": "wire-capture-key",
+      "sec-ch-ua-mobile": "?0",
+      "accept": "*/*",
+      "origin": "http://127.0.0.1:49351",
+      "sec-fetch-site": "cross-site",
+      "sec-fetch-mode": "cors",
+      "sec-fetch-dest": "empty",
+      "referer": "http://127.0.0.1:49351/",
+      "accept-encoding": "gzip, deflate, br, zstd"
+    },
+    "body": {
+      "event": "videoStart",
+      "timestamp": 1790773076056,
+      "viewId": "1790773075836-snos63r46",
+      "sessionId": "1790773075836-c2a7iek2t",
+      "viewerId": "1790773075836-6mtqvhcij",
+      "videoId": "wire-fixture-vod",
+      "videoTitle": "Wire fixture (VOD)",
+      "isLive": false,
+      "playerVersion": "1.19.3",
+      "playerName": "scarlett-player",
+      "browser": "Chrome",
+      "os": "macOS",
+      "deviceType": "desktop",
+      "screenSize": "1280x720",
+      "playerSize": "640x360",
+      "connectionType": "4g",
+      "tenant": "wire",
+      "planTier": "free",
+      "experiment": 42,
+      "beta": true,
+      "startupTime": 153,
+      "beaconSeq": 5
+    }
+  }
+}

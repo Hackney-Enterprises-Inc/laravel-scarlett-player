@@ -17,8 +17,8 @@ use Hei\ScarlettPlayer\Exceptions\InvalidBeaconContextException;
  * name carrying another type, lands in $custom and is stored, never rejected,
  * because a 422 on an unknown key breaks every host that adds a custom dimension.
  *
- * A key present with a null value is treated as absent, known or custom, so it
- * never touches what is stored (the fill-if-absent rule).
+ * Null is absent except for qoeScore/qoeVersion: a null score clears an older score
+ * so an access-denied view is excluded from averages.
  *
  * $server is what the host asserted about the beacon (beacons.context, or a pipeline
  * step through withServer()), never what the browser sent. A key in $server is never
@@ -37,10 +37,36 @@ final readonly class BeaconPayload
     public const IDENTITY = ['event', 'timestamp', 'viewId', 'sessionId', 'viewerId', 'videoId'];
 
     /**
-     * Frozen v0.3.0 promotions: these names remain custom in the v0.2.1 hash basis,
+     * Frozen field promotions: these names remain custom in the v0.2.1 hash basis,
      * regardless of type. Do not remove them when changing DTO classification.
      */
-    private const LEGACY_HASH_CUSTOM = ['beaconSeq', 'seekSource'];
+    private const LEGACY_HASH_CUSTOM = [
+        'beaconSeq', 'seekSource',
+        'anonymous',
+        'pageUrl',
+        'referrerOrigin',
+        'pageLoadToInitMs',
+        'playerInitMs',
+        'qoeVersion',
+        'errorCategory',
+        'errorSeverity',
+        'httpStatus',
+        'mediaErrorCode',
+        'attempts',
+        'retriesExhausted',
+        'reconnectExhausted',
+        'timedOut',
+        'warningCount',
+        'fatalErrorCategory',
+        'segmentCount',
+        'segmentBytes',
+        'segmentLoadAvgMs',
+        'segmentLoadMaxMs',
+        'segmentErrors',
+        'segmentThroughputBps',
+        'decodedFrames',
+        'droppedFrames',
+    ];
 
     /**
      * Context keys on every beacon, by the type validation accepts.
@@ -61,12 +87,38 @@ final readonly class BeaconPayload
     ];
 
     /**
-     * Beacon keys shipped through player 1.19.3, by the type validation accepts.
+     * Beacon keys including the signals contract, by the type validation accepts.
      * `scalar` is a string or a number (errorCode is either).
      *
      * @var array<string, 'numeric'|'string'|'boolean'|'scalar'>
      */
     public const FIELDS = [
+        // Signals: intervals, page context, structured errors and privacy.
+        'anonymous' => 'boolean',
+        'pageUrl' => 'string',
+        'referrerOrigin' => 'string',
+        'pageLoadToInitMs' => 'numeric',
+        'playerInitMs' => 'numeric',
+        'qoeVersion' => 'numeric',
+        'errorCategory' => 'string',
+        'errorSeverity' => 'string',
+        'httpStatus' => 'numeric',
+        'mediaErrorCode' => 'numeric',
+        'attempts' => 'numeric',
+        'retriesExhausted' => 'boolean',
+        'reconnectExhausted' => 'boolean',
+        'timedOut' => 'boolean',
+        'warningCount' => 'numeric',
+        'fatalErrorCategory' => 'string',
+        'segmentCount' => 'numeric',
+        'segmentBytes' => 'numeric',
+        'segmentLoadAvgMs' => 'numeric',
+        'segmentLoadMaxMs' => 'numeric',
+        'segmentErrors' => 'numeric',
+        'segmentThroughputBps' => 'numeric',
+        'decodedFrames' => 'numeric',
+        'droppedFrames' => 'numeric',
+
         // every beacon (player 1.19.3)
         'beaconSeq' => 'numeric',
         // seeking
@@ -114,7 +166,7 @@ final readonly class BeaconPayload
     /**
      * @param  int  $timestamp  client clock, epoch milliseconds
      * @param  array<string, string|bool>  $context  known context keys present and non-null
-     * @param  array<string, int|float|string|bool>  $fields  known event keys present and non-null
+     * @param  array<string, int|float|string|bool|null>  $fields  known event keys, including explicit null qoeScore/qoeVersion
      * @param  array<string, mixed>  $custom  every key the package does not know
      * @param  string|null  $ip  the client address, only when beacons.store_ip is on
      * @param  array<string, mixed>  $server  server-owned keys, non-null values only
@@ -158,8 +210,12 @@ final readonly class BeaconPayload
                 continue;
             }
 
-            // Present-but-null is absent, for known keys and custom dimensions alike.
+            // Keep null score/version presence, but omit nulls from the legacy hash basis.
             if ($value === null) {
+                if (in_array($key, ['qoeScore', 'qoeVersion'], true)) {
+                    $fields[$key] = null;
+                }
+
                 continue;
             }
 
@@ -197,7 +253,7 @@ final readonly class BeaconPayload
             'sessionId' => (string) $data['sessionId'],
             'viewerId' => (string) $data['viewerId'],
             'videoId' => (string) $data['videoId'],
-        ], $context, array_diff_key($fields, array_flip(self::LEGACY_HASH_CUSTOM)), $legacyCustom);
+        ], $context, array_filter(array_diff_key($fields, array_flip(self::LEGACY_HASH_CUSTOM)), fn (mixed $value): bool => $value !== null), $legacyCustom);
 
         return new self(
             event: (string) $data['event'],
@@ -306,7 +362,7 @@ final readonly class BeaconPayload
      * The beacon as stored: the browser's keys, then the server context last, so a
      * server-owned value wins a name the browser also used. What the raw event log
      * and the fake's ledger record, after any pipeline step, so a redaction reaches
-     * the raw log too. Known keys sent as null are left out.
+     * the raw log too. Explicit null qoeScore/qoeVersion are retained; other null keys are left out.
      *
      * @return array<string, mixed>
      */

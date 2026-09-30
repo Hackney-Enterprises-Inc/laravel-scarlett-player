@@ -385,6 +385,12 @@ return [
          * 1.19.1: the embed bundle has no attribute for it.
          */
         'heartbeat_interval' => env('SCARLETT_HEARTBEAT_INTERVAL'),
+
+        /** Per-view ephemeral IDs without browser storage. Does not enable analytics. */
+        'analytics_anonymous' => env('SCARLETT_ANALYTICS_ANONYMOUS', false),
+
+        /** Suppress beacons when the browser sends DNT or Global Privacy Control. */
+        'analytics_respect_do_not_track' => env('SCARLETT_ANALYTICS_RESPECT_DO_NOT_TRACK', false),
     ],
 
     /*

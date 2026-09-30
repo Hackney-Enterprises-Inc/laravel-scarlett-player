@@ -53,6 +53,8 @@ class ScarlettPlayer extends Component
         ?string $playerId = null,
         public readonly ?string $nonce = null,
         public readonly bool $manual = false,
+        ?bool $anonymous = null,
+        ?bool $respectDoNotTrack = null,
     ) {
         $builder = $scarlett->for($media);
 
@@ -70,6 +72,8 @@ class ScarlettPlayer extends Component
         if ($title !== null) {
             $builder->title($title);
         }
+
+        $builder->analyticsPrivacy($anonymous, $respectDoNotTrack);
 
         if ($analytics) {
             $builder->withAnalytics();

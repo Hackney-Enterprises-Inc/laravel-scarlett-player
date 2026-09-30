@@ -1,13 +1,15 @@
 # Pinned player bundle
 
-The browser group runs the real analytics plugin from the published embed bundle, never
-from a local build: the player repository's `packages/embed/dist` holds whatever was last
+The browser group retains the published 1.19.1 embed bundle as a legacy regression
+fixture while 1.20.0 publication is pending. It does not validate the new target pin.
+The new signals working-tree transports are captured separately under
+`tests/Fixtures/wire/signals-candidate/`. Historically, the player repository's `packages/embed/dist` holds whatever was last
 built there (1.16.3, unreleased, on 2026-09-27), which is not the version this package pins.
 
 | Field | Value |
 |---|---|
 | Package | `@scarlett-player/embed` |
-| Version | `1.19.1` (the `player.player_version` pin) |
+| Version | `1.19.1` (legacy browser regression fixture) |
 | Obtained | `npm pack @scarlett-player/embed@1.19.1`, 2026-09-28 |
 | Tarball | `scarlett-player-embed-1.19.1.tgz` |
 | Tarball integrity (npm) | `sha512-jXmb96PkcWJmQdBZWFLA3LVSOSIkIoKjyq2MRfEVsnFZPFOs+1ZechVemGkf1OKFUPEF22JSsymqbiNh0WWjQQ==` |

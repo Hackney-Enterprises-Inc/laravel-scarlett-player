@@ -6,7 +6,7 @@ use Hei\ScarlettPlayer\Exceptions\InvalidPlayerConfigException;
 use Hei\ScarlettPlayer\Player\FeatureMatrix;
 
 it('supports every feature in module mode', function (string $feature): void {
-    expect(FeatureMatrix::supports($feature, 'module', '1.16.2'))->toBeTrue();
+    expect(FeatureMatrix::supports($feature, 'module', '1.20.0'))->toBeTrue();
 })->with(array_keys(FeatureMatrix::FEATURES));
 
 it('says no for the live flag and the heartbeat interval in embed mode', function (string $feature): void {

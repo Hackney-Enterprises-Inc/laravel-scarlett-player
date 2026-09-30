@@ -142,6 +142,8 @@ export function buildPlugins(config, options = {}) {
       ...(config.analytics.videoTitle ? { videoTitle: config.analytics.videoTitle } : {}),
       // Milliseconds, from player.heartbeat_interval; a page-wide option below still wins.
       ...(config.analytics.heartbeatInterval ? { heartbeatInterval: config.analytics.heartbeatInterval } : {}),
+      ...(typeof config.analytics.anonymous === 'boolean' ? { anonymous: config.analytics.anonymous } : {}),
+      ...(typeof config.analytics.respectDoNotTrack === 'boolean' ? { respectDoNotTrack: config.analytics.respectDoNotTrack } : {}),
       ...(options.analytics || {}),
     };
     plugins.push(createAnalyticsPlugin(analytics));

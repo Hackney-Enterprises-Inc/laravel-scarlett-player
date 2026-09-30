@@ -197,6 +197,12 @@ class ScarlettPlayerServiceProvider extends ServiceProvider
     // The beacons module.
     private function bootBeacons(): void
     {
+        // Existing hosts must not republish the folder of create migrations.
+        // A stable destination makes repeat publishes skip this upgrade file.
+        $this->publishes([
+            __DIR__.'/../database/migrations/0001_01_01_000005_add_signals_to_scarlett_tables.php' => database_path('migrations/0001_01_01_000005_add_signals_to_scarlett_tables.php'),
+        ], 'scarlett-migrations-signals');
+
         RateLimiter::for('scarlett-beacons', fn (Request $request): Limit => $this->limitFrom(
             config('scarlett-player.beacons.throttle'),
         )->by((string) $request->ip()));
@@ -228,6 +234,7 @@ class ScarlettPlayerServiceProvider extends ServiceProvider
             BeaconQueueCheck::class,
             BeaconIpColumnCheck::class,
             Doctor\Checks\BeaconSeqColumnCheck::class,
+            Doctor\Checks\BeaconSignalsColumnsCheck::class,
             BeaconContextCheck::class,
         ];
     }

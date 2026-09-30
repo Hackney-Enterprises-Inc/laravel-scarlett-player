@@ -40,7 +40,7 @@ use Throwable;
  * 3. One conditional UPDATE applying the merge classes to the columns this beacon
  *    carries:
  *    - set-once: COALESCE(col, incoming)
- *    - true-wins (is_live only): a true sets it, a false only fills an empty
+ *    - true-wins (is_live and anonymous): a true sets it, a false only fills an empty
  *      column, nothing clears it. A live viewStart fires before hls.js has read
  *      the playlist and says false, and a live stream that
  *      turns into a replay in the same session must not flip it back
@@ -48,10 +48,12 @@ use Throwable;
  *      differs between SQLite, MySQL and Postgres)
  *    - latest-by-timestamp: written when the column is empty or the beacon is at
  *      least as new as the stamp that wrote the column (qoe_score_at and its
- *      siblings, one per column; the live latency summary shares one because the
- *      player sends it as a unit). metrics_at is the newest of those stamps.
+ *      siblings; QoE and segment intervals require a current stamp even when a
+ *      value is null. Segment and latency groups each share a stamp).
+ *      metrics_at is the newest of those stamps.
  *    - fill-if-absent: a key absent from the payload gets no assignment at all, so
- *      it never touches its column (SQL is built per beacon; no NULL bindings)
+ *      it never touches its column, except null QoE and missing segment members
+ *      within a reported interval
  *    The stamps, custom_at and last_event_at are assigned last, because MySQL
  *    evaluates UPDATE assignments left to right with the values already updated,
  *    where Postgres and SQLite read the old row.
@@ -68,7 +70,7 @@ use Throwable;
  * merges the same way in the same locked read, and only for a beacon that carries
  * one: a host without beacons.context never reads or writes those columns. Ties: two beacons in the same millisecond
  * tie-break on their event key for custom keys, while the per-column latest group
- * (qoe_score and siblings) resolves an exact tie by processing order. The set-once class is not, by the plan's definition: the first
+ * resolves an exact tie by processing order, except a null qoe_score wins ties. The set-once class is not, by the plan's definition: the first
  * beacon to arrive with a value keeps it, so of two viewEnds delivered out of order
  * the first to arrive sets ended_at and exit_type, and the second only fills what
  * the first lacked.
@@ -104,6 +106,9 @@ class EloquentBeaconStore implements BeaconStore
         'playerSize' => 'player_size',
         'connectionType' => 'connection_type',
         'exitType' => 'exit_type',
+        'pageUrl' => 'page_url',
+        'referrerOrigin' => 'referrer_origin',
+        'fatalErrorCategory' => 'fatal_error_category',
     ];
 
     /**
@@ -113,6 +118,7 @@ class EloquentBeaconStore implements BeaconStore
      */
     public const TRUE_WINS = [
         'isLive' => 'is_live',
+        'anonymous' => 'anonymous',
     ];
 
     /**
@@ -130,6 +136,7 @@ class EloquentBeaconStore implements BeaconStore
         'pauseCount' => 'pause_count',
         'qualityChanges' => 'quality_changes',
         'errorCount' => 'error_count',
+        'warningCount' => 'warning_count',
         'maxBitrate' => 'max_bitrate',
     ];
 
@@ -139,6 +146,15 @@ class EloquentBeaconStore implements BeaconStore
      */
     public const LATEST = [
         'qoeScore' => ['qoe_score', 'qoe_score_at'],
+        'segmentCount' => ['segment_count', 'segment_count_at'],
+        'segmentBytes' => ['segment_bytes', 'segment_count_at'],
+        'segmentLoadAvgMs' => ['segment_load_avg_ms', 'segment_count_at'],
+        'segmentLoadMaxMs' => ['segment_load_max_ms', 'segment_count_at'],
+        'segmentErrors' => ['segment_errors', 'segment_count_at'],
+        'segmentThroughputBps' => ['segment_throughput_bps', 'segment_count_at'],
+        'decodedFrames' => ['decoded_frames', 'decoded_frames_at'],
+        'droppedFrames' => ['dropped_frames', 'dropped_frames_at'],
+
         'avgBitrate' => ['avg_bitrate', 'avg_bitrate_at'],
         'rebufferRatio' => ['rebuffer_ratio', 'rebuffer_ratio_at'],
         'completionRate' => ['completion_rate', 'completion_rate_at'],
@@ -156,6 +172,59 @@ class EloquentBeaconStore implements BeaconStore
         'pause_count', 'quality_changes', 'error_count', 'max_bitrate', 'avg_bitrate',
         'live_latency_samples',
     ];
+
+    /** Columns added by the signals upgrade, also checked by doctor. */
+    public const SIGNAL_COLUMNS = [
+        self::VIEWS => [
+            'qoe_version',
+            'warning_count',
+            'fatal_error_category',
+            'anonymous',
+            'page_url',
+            'referrer_origin',
+            'page_load_to_init_ms',
+            'player_init_ms',
+            'segment_count',
+            'segment_count_at',
+            'segment_bytes',
+            'segment_bytes_at',
+            'segment_load_avg_ms',
+            'segment_load_avg_ms_at',
+            'segment_load_max_ms',
+            'segment_load_max_ms_at',
+            'segment_errors',
+            'segment_errors_at',
+            'segment_throughput_bps',
+            'segment_throughput_bps_at',
+            'decoded_frames',
+            'decoded_frames_at',
+            'dropped_frames',
+            'dropped_frames_at',
+        ],
+        self::ERRORS => [
+            'category',
+            'severity',
+            'http_status',
+            'media_error_code',
+            'attempts',
+            'retries_exhausted',
+            'reconnect_exhausted',
+            'timed_out',
+        ],
+    ];
+
+    /** Segment measurements are one interval, including unavailable throughput. */
+    private const SEGMENT_COLUMNS = [
+        'segment_count',
+        'segment_bytes',
+        'segment_load_avg_ms',
+        'segment_load_max_ms',
+        'segment_errors',
+        'segment_throughput_bps',
+    ];
+
+    /** @var array<string, array<string, true>> Available columns, cached per table. */
+    private array $signalColumns = [];
 
     /** Whether scarlett_views has the ip_address column, checked once per store. */
     private ?bool $ipColumn = null;
@@ -179,6 +248,10 @@ class EloquentBeaconStore implements BeaconStore
         // migrations lack seq; keep ingesting until the host adds the column.
         if ($this->config->get('scarlett-player.beacons.store_raw_events') && ! $this->rawEventExcluded($payload->event)) {
             $this->seqColumn ??= $connection->getSchemaBuilder()->hasColumn(self::EVENTS, 'seq');
+        }
+
+        foreach ($payload->event === 'error' ? [self::VIEWS, self::ERRORS] : [self::VIEWS] as $table) {
+            $this->signalColumns[$table] ??= array_fill_keys($connection->getSchemaBuilder()->getColumnListing($table), true);
         }
 
         /** @var list<object> $fired */
@@ -375,8 +448,20 @@ class EloquentBeaconStore implements BeaconStore
         $latest = $this->latest($payload);
 
         foreach ($latest as $column => [$value, $stamp]) {
-            $sets[] = $grammar->wrap($column).' = CASE WHEN '.$col($column).' IS NULL OR '.$col($stamp).' IS NULL OR ? >= '.$col($stamp).' THEN ? ELSE '.$col($column).' END';
-            array_push($bindings, $at, $value);
+            $condition = (in_array($stamp, ['qoe_score_at', 'segment_count_at'], true) ? '' : $col($column).' IS NULL OR ')
+                .$col($stamp).' IS NULL OR ? >= '.$col($stamp);
+            $bindings[] = $at;
+
+            // A denied final score wins a same-millisecond heartbeat too. Use the
+            // same predicate for both members, before updating their shared stamp.
+            if ($stamp === 'qoe_score_at' && $payload->get('qoeScore') !== null) {
+                $condition = $col($stamp).' IS NULL OR ? > '.$col($stamp)
+                    .' OR (? = '.$col($stamp).' AND '.$col('qoe_score').' IS NOT NULL)';
+                $bindings[] = $at;
+            }
+
+            $sets[] = $grammar->wrap($column).' = CASE WHEN '.$condition.' THEN ? ELSE '.$col($column).' END';
+            $bindings[] = $value;
         }
 
         foreach ($this->mergeMaps($connection, $payload) as $column => [$values, $stamps]) {
@@ -497,7 +582,27 @@ class EloquentBeaconStore implements BeaconStore
     {
         $code = $payload->get('errorCode');
 
+        $details = [];
+
+        foreach ([
+            'errorCategory' => 'category', 'errorSeverity' => 'severity',
+            'httpStatus' => 'http_status', 'mediaErrorCode' => 'media_error_code',
+            'attempts' => 'attempts', 'retriesExhausted' => 'retries_exhausted',
+            'reconnectExhausted' => 'reconnect_exhausted', 'timedOut' => 'timed_out',
+        ] as $field => $column) {
+            $value = $payload->get($field);
+
+            if (is_string($value)) {
+                $details[$column] = $this->string($value, 255);
+            } elseif (is_bool($value)) {
+                $details[$column] = $value;
+            } elseif (is_int($value) || is_float($value)) {
+                $details[$column] = $this->rawSequence($value);
+            }
+        }
+
         return $connection->table(self::ERRORS)->insertOrIgnore([
+            ...$this->supportedSignals($details, self::ERRORS),
             'view_id' => $payload->viewId,
             'video_id' => $payload->videoId,
             'event_key' => $key,
@@ -530,7 +635,7 @@ class EloquentBeaconStore implements BeaconStore
     }
 
     /**
-     * @return array<string, string|bool>
+     * @return array<string, int|float|string|bool>
      */
     private function setOnce(Connection $connection, BeaconPayload $payload): array
     {
@@ -540,7 +645,15 @@ class EloquentBeaconStore implements BeaconStore
             $value = $payload->get($key);
 
             if ($value !== null) {
-                $columns[$column] = is_bool($value) ? $value : $this->string($value, 255);
+                $columns[$column] = is_bool($value) ? $value : $this->string($value, in_array($column, ['page_url', 'referrer_origin'], true) ? 65535 : 255);
+            }
+        }
+
+        foreach (['pageLoadToInitMs' => 'page_load_to_init_ms', 'playerInitMs' => 'player_init_ms'] as $key => $column) {
+            $value = $payload->get($key);
+
+            if ((is_int($value) || is_float($value)) && is_finite($value)) {
+                $columns[$column] = max(0, $value);
             }
         }
 
@@ -548,7 +661,7 @@ class EloquentBeaconStore implements BeaconStore
             $columns['ip_address'] = $payload->ip;
         }
 
-        return $columns;
+        return $this->supportedSignals($columns);
     }
 
     /**
@@ -568,7 +681,7 @@ class EloquentBeaconStore implements BeaconStore
             }
         }
 
-        return $columns;
+        return $this->supportedSignals($columns);
     }
 
     /**
@@ -581,18 +694,22 @@ class EloquentBeaconStore implements BeaconStore
         foreach (self::MONOTONIC as $key => $column) {
             $value = $payload->get($key);
 
+            if ($column === 'warning_count' && (is_int($value) || is_float($value))) {
+                $value = $this->rawSequence($value);
+            }
+
             if (is_int($value) || is_float($value)) {
                 $columns[$column] = max($columns[$column] ?? 0, $this->whole($value));
             }
         }
 
-        return $columns;
+        return $this->supportedSignals($columns);
     }
 
     /**
      * Column => [value, stamp column] for the latest-by-timestamp keys present.
      *
-     * @return array<string, array{int|float|bool, string}>
+     * @return array<string, array{int|float|bool|null, string}>
      */
     private function latest(BeaconPayload $payload): array
     {
@@ -603,12 +720,61 @@ class EloquentBeaconStore implements BeaconStore
 
             if (is_bool($value)) {
                 $columns[$column] = [$value, $stamp];
-            } elseif (is_int($value) || is_float($value)) {
+            } elseif ((is_int($value) || is_float($value)) && is_finite($value)) {
                 $columns[$column] = [in_array($column, self::INTEGER_COLUMNS, true) ? $this->whole($value) : (float) $value, $stamp];
             }
         }
 
-        return $columns;
+        // Score and version are one measurement. An omitted score touches neither;
+        // an explicit null is a measurement and must not be filled by an older score.
+        if ($payload->has('qoeScore') && $payload->get('qoeScore') === null) {
+            $columns['qoe_score'] = [null, 'qoe_score_at'];
+        }
+
+        if (isset($columns['qoe_score'])) {
+            $version = $payload->get('qoeVersion');
+            $specified = $payload->has('qoeVersion') || array_key_exists('qoeVersion', $payload->custom);
+            $usable = (is_int($version) || is_float($version)) && is_finite($version)
+                && $version >= 1 && $version <= 2147483647 && floor($version) === (float) $version;
+            $columns['qoe_version'] = [$specified ? ($usable ? (int) $version : null) : 1, 'qoe_score_at'];
+
+            // Without the version column, a v2/unknown score would look like v1
+            // to legacy queries and the upgrade's v1 backfill. Preserve it in the
+            // raw event, but exclude it from unversioned view averages.
+            if (! isset($this->signalColumns[self::VIEWS]['qoe_version']) && $columns['qoe_version'][0] !== 1) {
+                $columns['qoe_score'][0] = null;
+            }
+        }
+
+        // A segmentCount marks a measured interval. Missing/invalid members are
+        // unavailable in that interval, not values from the preceding heartbeat.
+        if (isset($columns['segment_count'])) {
+            foreach (self::SEGMENT_COLUMNS as $column) {
+                $columns[$column] ??= [null, 'segment_count_at'];
+            }
+        } else {
+            $columns = array_diff_key($columns, array_flip(self::SEGMENT_COLUMNS));
+        }
+
+        $columns = $this->supportedSignals($columns);
+
+        return array_filter($columns, fn (array $measurement): bool => ! in_array($measurement[1], self::SIGNAL_COLUMNS[self::VIEWS], true)
+            || isset($this->signalColumns[self::VIEWS][$measurement[1]])
+        );
+    }
+
+    /**
+     * Only omit upgrade columns that are missing; legacy columns keep their rules.
+     *
+     * @template TValue
+     *
+     * @param  array<string, TValue>  $columns
+     * @return array<string, TValue>
+     */
+    private function supportedSignals(array $columns, string $table = self::VIEWS): array
+    {
+        return array_filter($columns, fn (string $column): bool => ! in_array($column, self::SIGNAL_COLUMNS[$table], true)
+            || isset($this->signalColumns[$table][$column]), ARRAY_FILTER_USE_KEY);
     }
 
     /**
