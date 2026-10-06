@@ -559,7 +559,10 @@ What changes for queries and listeners:
   The fields above moved from `$payload->custom` to the known fields
   (`$payload->get('reconnectCount')`); a driver that read them from `custom` must
   switch. Deduplication hashes are unchanged. A queued job serialized before the
-  upgrade keeps its old classification.
+  upgrade keeps its old classification; read promoted fields with
+  `$payload->knownValue('reconnectCount')` to get the same value from such a job as
+  from a fresh one, and decide whether an error ended its view with
+  `$payload->isFatalError()`.
 
 ### Player privacy options
 

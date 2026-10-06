@@ -3,6 +3,8 @@ includes:
 
 parameters:
     level: 8
+    # The lowest PHP composer.json supports, whatever PHP runs the analysis.
+    phpVersion: 80300
     paths:
         - src
         # The host-model fixture that uses HasScarlettClips, so the trait body is
