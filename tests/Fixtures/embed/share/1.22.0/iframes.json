@@ -1,6 +1,6 @@
 {
-  "_about": "Share-built embed iframes, produced by buildEmbedSnippet() from the published @scarlett-player/share@1.19.1 dist/index.js with embedBaseUrl = ScarlettPlayer::embedUrl('paid-1') under the TestCase app key. See PROVENANCE.md.",
-  "playerVersion": "1.19.1",
+  "_about": "Share-built embed iframes, produced by buildEmbedSnippet() from the published @scarlett-player/share@1.22.0 dist/index.js with embedBaseUrl = ScarlettPlayer::embedUrl('paid-1') under the TestCase app key. See PROVENANCE.md.",
+  "playerVersion": "1.22.0",
   "embedBaseUrl": "http://localhost/v/paid-1?signature=2b4b5d5eca9221580fb863fea7670abccd822e677783efc3f48b7ed6ed70aa3c",
   "cases": {
     "share-built": {

@@ -16,7 +16,7 @@ use Illuminate\Support\Facades\Queue;
  * scarlett:beacon:test and scarlett:views:prune with its schedule hook.
  */
 
-it('posts viewStart, heartbeat and viewEnd through the header and the query key paths', function (): void {
+it('posts a view with a reconnect through the header and the query key paths', function (): void {
     Http::fake(['*' => Http::response(status: 204)]);
 
     $this->artisan('scarlett:beacon:test', ['--url' => 'https://ingest.example.test/api/scarlett/beacons'])
@@ -24,14 +24,19 @@ it('posts viewStart, heartbeat and viewEnd through the header and the query key 
         ->expectsOutputToContain('Every beacon was answered 204.')
         ->assertSuccessful();
 
-    Http::assertSentCount(6);
+    Http::assertSentCount(10);
 
     $sent = Http::recorded()->map(fn (array $pair): Request => $pair[0]);
     $header = $sent->filter(fn (Request $request): bool => $request->header('X-API-Key') === [TestCase::BEACON_KEY]);
     $query = $sent->filter(fn (Request $request): bool => str_contains($request->url(), 'api_key='.TestCase::BEACON_KEY));
+    $events = ['viewStart', 'heartbeat', 'reconnecting', 'recovered', 'viewEnd'];
+    $headerEnd = $header->first(fn (Request $request): bool => $request['event'] === 'viewEnd')->data();
+    $queryEnd = $query->first(fn (Request $request): bool => $request['event'] === 'viewEnd')->data();
 
-    expect($header->map(fn (Request $request): string => $request['event'])->values()->all())->toBe(['viewStart', 'heartbeat', 'viewEnd'])
-        ->and($query->map(fn (Request $request): string => $request['event'])->values()->all())->toBe(['viewStart', 'heartbeat', 'viewEnd'])
+    expect($header->map(fn (Request $request): string => $request['event'])->values()->all())->toBe($events)
+        ->and($query->map(fn (Request $request): string => $request['event'])->values()->all())->toBe($events)
+        ->and($headerEnd)->toMatchArray(['isLive' => false, 'exitType' => 'abandoned', 'avgBitrate' => null, 'maxBitrate' => null])
+        ->and($queryEnd)->toMatchArray(['isLive' => true, 'exitType' => 'liveEnded', 'completionRate' => null, 'avgBitrate' => null, 'maxBitrate' => null])
         ->and($query->every(fn (Request $request): bool => $request->header('X-API-Key') === []))->toBeTrue()
         ->and($sent->every(fn (Request $request): bool => str_starts_with((string) $request['viewId'], BeaconTestCommand::VIEW_PREFIX)))->toBeTrue();
 });
@@ -82,6 +87,34 @@ it('passes the real ingest route end to end', function (): void {
     Queue::fake();
 
     $this->artisan('scarlett:beacon:test', ['--url' => 'http://localhost/api/scarlett/beacons'])->assertSuccessful();
+});
+
+it('stores the command\'s sample views with null bitrates, reconnects and a liveEnded exit', function (): void {
+    $this->usesMigrations();
+    config()->set('queue.default', 'sync');
+    Http::fake(function (Request $request) {
+        $uri = (string) parse_url($request->url(), PHP_URL_PATH).(($q = parse_url($request->url(), PHP_URL_QUERY)) ? '?'.$q : '');
+        $server = ['CONTENT_TYPE' => 'application/json'];
+
+        foreach ($request->headers() as $name => $values) {
+            $server['HTTP_'.strtoupper(str_replace('-', '_', $name))] = $values[0];
+        }
+
+        $response = $this->call('POST', $uri, [], [], [], $server, $request->body());
+
+        return Http::response($response->getContent(), $response->getStatusCode());
+    });
+
+    $this->artisan('scarlett:beacon:test', ['--url' => 'http://localhost/api/scarlett/beacons'])->assertSuccessful();
+
+    $views = DB::table('scarlett_views')->orderBy('is_live')->get();
+    expect($views)->toHaveCount(2)
+        ->and($views->pluck('exit_type')->all())->toBe(['abandoned', 'liveEnded'])
+        ->and((float) $views[0]->media_duration)->toBe(60.0)
+        ->and($views[1]->media_duration)->toBeNull()
+        ->and($views->every(fn ($view): bool => (int) $view->pause_ms === 0))->toBeTrue()
+        ->and($views->every(fn ($view): bool => $view->avg_bitrate === null && $view->max_bitrate === null && (int) $view->reconnect_count === 1))->toBeTrue()
+        ->and(DB::table('scarlett_view_errors')->count())->toBe(0);
 });
 
 it('prunes raw events, errors and views past their retention', function (): void {

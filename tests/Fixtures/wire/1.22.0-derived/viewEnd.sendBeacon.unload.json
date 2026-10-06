@@ -1,0 +1,63 @@
+{
+    "fixture": {
+        "player": "1.22.0",
+        "status": "derived (recapture owed)",
+        "derivedAt": "2026-10-06",
+        "event": "viewEnd",
+        "transport": "sendBeacon",
+        "variant": "unload",
+        "scenario": "derived-vod-unload"
+    },
+    "request": {
+        "method": "POST",
+        "path": "/api/scarlett/beacons",
+        "query": {
+            "api_key": "wire-capture-key"
+        },
+        "headers": {
+            "content-type": "application/json"
+        },
+        "body": {
+            "event": "viewEnd",
+            "timestamp": 1791300120000,
+            "viewId": "derived-1.22.0-vod-unload",
+            "sessionId": "derived-1.22.0-session",
+            "viewerId": "derived-1.22.0-viewer",
+            "videoId": "wire-fixture-vod",
+            "videoTitle": "Wire fixture (VOD)",
+            "isLive": false,
+            "playerVersion": "1.22.0",
+            "playerName": "scarlett-player",
+            "browser": "Instagram",
+            "os": "iOS",
+            "deviceType": "mobile",
+            "screenSize": "390x844",
+            "playerSize": "390x219",
+            "connectionType": "4g",
+            "tenant": "wire",
+            "planTier": "free",
+            "watchTime": 20000,
+            "playTime": 15000,
+            "rebufferCount": 0,
+            "rebufferDuration": 0,
+            "reconnectCount": 0,
+            "reconnectDuration": 0,
+            "avgBitrate": 2400000,
+            "maxBitrate": 4800000,
+            "qualityChanges": 2,
+            "pauseCount": 1,
+            "pauseDuration": 5000,
+            "seekCount": 2,
+            "elementSeekCount": 2,
+            "errorCount": 0,
+            "warningCount": 0,
+            "qoeScore": 92.5,
+            "qoeVersion": 2,
+            "startupTime": 420,
+            "rebufferRatio": 0,
+            "exitType": "abandoned",
+            "completionRate": 37.5,
+            "beaconSeq": 5
+        }
+    }
+}

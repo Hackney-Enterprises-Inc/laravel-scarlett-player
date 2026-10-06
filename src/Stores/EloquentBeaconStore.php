@@ -138,6 +138,11 @@ class EloquentBeaconStore implements BeaconStore
         'errorCount' => 'error_count',
         'warningCount' => 'warning_count',
         'maxBitrate' => 'max_bitrate',
+        'elementSeekCount' => 'element_seek_count',
+        'reconnectCount' => 'reconnect_count',
+        'reconnectDuration' => 'reconnect_ms',
+        'dvrTime' => 'dvr_ms',
+        'pauseDuration' => 'pause_ms',
     ];
 
     /**
@@ -210,6 +215,26 @@ class EloquentBeaconStore implements BeaconStore
             'retries_exhausted',
             'reconnect_exhausted',
             'timed_out',
+        ],
+    ];
+
+    /** Columns added by the player 1.22.0 upgrade (migration 6), also checked by doctor. */
+    public const RECONNECT_COLUMNS = [
+        self::VIEWS => [
+            'element_seek_count',
+            'reconnect_count',
+            'reconnect_ms',
+            'dvr_ms',
+            'pause_ms',
+            'media_duration',
+            'media_duration_at',
+        ],
+        self::ERRORS => [
+            'network_state',
+            'ready_state',
+            'online',
+            'source_host',
+            'reconnecting',
         ],
     ];
 
@@ -580,7 +605,10 @@ class EloquentBeaconStore implements BeaconStore
 
     private function insertError(Connection $connection, BeaconPayload $payload, string $key, string $now): bool
     {
-        $code = $payload->get('errorCode');
+        // knownValue(), not get(): the row is unique on the event key a job queued by
+        // an older package shares with the fresh parse, so whichever arrives first
+        // decides it for good, and both must read promoted names the same way.
+        $code = $payload->knownValue('errorCode');
 
         $details = [];
 
@@ -589,8 +617,10 @@ class EloquentBeaconStore implements BeaconStore
             'httpStatus' => 'http_status', 'mediaErrorCode' => 'media_error_code',
             'attempts' => 'attempts', 'retriesExhausted' => 'retries_exhausted',
             'reconnectExhausted' => 'reconnect_exhausted', 'timedOut' => 'timed_out',
+            'networkState' => 'network_state', 'readyState' => 'ready_state', 'online' => 'online',
+            'sourceHost' => 'source_host', 'reconnecting' => 'reconnecting',
         ] as $field => $column) {
-            $value = $payload->get($field);
+            $value = $payload->knownValue($field);
 
             if (is_string($value)) {
                 $details[$column] = $this->string($value, 255);
@@ -606,10 +636,12 @@ class EloquentBeaconStore implements BeaconStore
             'view_id' => $payload->viewId,
             'video_id' => $payload->videoId,
             'event_key' => $key,
-            'type' => $this->nullableString($payload->get('errorType'), 255),
-            'message' => $this->nullableString($payload->get('errorMessage'), 65535),
+            'type' => $this->nullableString($payload->knownValue('errorType'), 255),
+            'message' => $this->nullableString($payload->knownValue('errorMessage'), 65535),
             'code' => $this->nullableString($code, 255),
-            'fatal' => $payload->get('fatal') === true,
+            // Severity, not the wire `fatal`: a reconnecting error is sent fatal but
+            // leaves its view open (BeaconPayload::isFatalError()).
+            'fatal' => $payload->isFatalError(),
             'occurred_at' => self::clientTime($payload->timestamp),
             'received_at' => $now,
         ]) === 1;
@@ -691,10 +723,14 @@ class EloquentBeaconStore implements BeaconStore
     {
         $columns = [];
 
+        // knownValue(): a running total from an older queued job (a counter promoted
+        // since, left in custom) still counts. Larger-wins is order independent, so
+        // reading it the way a fresh parse would is safe in any delivery order.
         foreach (self::MONOTONIC as $key => $column) {
-            $value = $payload->get($key);
+            $value = $payload->knownValue($key);
 
-            if ($column === 'warning_count' && (is_int($value) || is_float($value))) {
+            // Upgrade columns are 32-bit on every engine: omit an out-of-range count.
+            if (in_array($column, ['warning_count', 'element_seek_count', 'reconnect_count'], true) && (is_int($value) || is_float($value))) {
                 $value = $this->rawSequence($value);
             }
 
@@ -746,6 +782,17 @@ class EloquentBeaconStore implements BeaconStore
             }
         }
 
+        // Media length from heartbeats only: recovered and rebufferEnd reuse `duration`
+        // for milliseconds. A load() zeroes it and a live source reports 0, Infinity
+        // (null on the wire) or a sliding window, so only a finite positive value on
+        // a beacon not saying live is a measurement; anything else leaves it alone.
+        $duration = $payload->knownValue('duration');
+
+        if ($payload->event === 'heartbeat' && $payload->knownValue('isLive') !== true
+            && (is_int($duration) || is_float($duration)) && is_finite($duration) && $duration > 0) {
+            $columns['media_duration'] = [(float) $duration, 'media_duration_at'];
+        }
+
         // A segmentCount marks a measured interval. Missing/invalid members are
         // unavailable in that interval, not values from the preceding heartbeat.
         if (isset($columns['segment_count'])) {
@@ -758,13 +805,17 @@ class EloquentBeaconStore implements BeaconStore
 
         $columns = $this->supportedSignals($columns);
 
-        return array_filter($columns, fn (array $measurement): bool => ! in_array($measurement[1], self::SIGNAL_COLUMNS[self::VIEWS], true)
+        // An upgrade column is written only with its stamp column present too.
+        $optional = [...self::SIGNAL_COLUMNS[self::VIEWS], ...self::RECONNECT_COLUMNS[self::VIEWS]];
+
+        return array_filter($columns, fn (array $measurement): bool => ! in_array($measurement[1], $optional, true)
             || isset($this->signalColumns[self::VIEWS][$measurement[1]])
         );
     }
 
     /**
-     * Only omit upgrade columns that are missing; legacy columns keep their rules.
+     * Only omit upgrade columns (signals, reconnects) that are missing; legacy
+     * columns keep their rules.
      *
      * @template TValue
      *
@@ -773,7 +824,9 @@ class EloquentBeaconStore implements BeaconStore
      */
     private function supportedSignals(array $columns, string $table = self::VIEWS): array
     {
-        return array_filter($columns, fn (string $column): bool => ! in_array($column, self::SIGNAL_COLUMNS[$table], true)
+        $optional = [...self::SIGNAL_COLUMNS[$table], ...self::RECONNECT_COLUMNS[$table]];
+
+        return array_filter($columns, fn (string $column): bool => ! in_array($column, $optional, true)
             || isset($this->signalColumns[$table][$column]), ARRAY_FILTER_USE_KEY);
     }
 

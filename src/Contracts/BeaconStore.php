@@ -25,6 +25,10 @@ use Hei\ScarlettPlayer\Data\BeaconPayload;
  * - Transitions, not receipts: ViewStarted when the view is first stored, ViewEnded
  *   when it first gains an end, PlaybackErrorReported when an error is first stored.
  *   A duplicate delivery fires none of them again.
+ * - Severity, not `fatal`: whether an error ended its view is
+ *   BeaconPayload::isFatalError(). From player 1.22.0 an error the provider
+ *   reconnects from is sent `fatal: true` with severity `warning`, and neither it nor
+ *   the `reconnecting` and `recovered` events end or fail the view.
  */
 interface BeaconStore
 {

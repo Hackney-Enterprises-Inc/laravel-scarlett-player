@@ -2,7 +2,7 @@
 
 Status: **derived (recapture owed)**. Prepared 2026-09-29 from the player's working
 tree for the planned 1.19.3 contract, not a released npm build or a browser capture.
-The package remains pinned to 1.19.1 and its captured `../1.19.1/` set is unchanged.
+At preparation (package 0.3.0) the package remained pinned to 1.19.1 (0.5.0 pins 1.22.0); its captured `../1.19.1/` set is unchanged.
 
 ## Sources read before derivation
 

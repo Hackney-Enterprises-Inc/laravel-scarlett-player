@@ -33,6 +33,27 @@ final readonly class BeaconPayload
      */
     public string $bodyHash;
 
+    /**
+     * Known-typed values of names promoted since the job was queued, captured from
+     * $custom once, when a payload serialized by an older package (no SERIAL_VERSION
+     * marker) is restored. Uninitialized on every other payload. Carried unchanged
+     * through the with*() methods, so neither a pipeline's withCustom() nor
+     * withServer() ownership adds or removes one. Read only by knownValue().
+     *
+     * Deliberately not set by the constructor, whose public signature stays as it
+     * was: PHP lets the class initialize a readonly property once from its own scope
+     * (__unserialize(), carryLegacy()), and every read goes through isset().
+     *
+     * @var array<string, int|float|string|bool>
+     */
+    private array $legacyKnown; // @phpstan-ignore property.uninitializedReadonly
+
+    /**
+     * Written by __serialize(). A serialized payload without it was queued by an
+     * older package, whose classification may have left promoted names in custom.
+     */
+    private const SERIAL_VERSION = 1;
+
     /** Keys every beacon carries. The four ids are required. */
     public const IDENTITY = ['event', 'timestamp', 'viewId', 'sessionId', 'viewerId', 'videoId'];
 
@@ -66,6 +87,20 @@ final readonly class BeaconPayload
         'segmentThroughputBps',
         'decodedFrames',
         'droppedFrames',
+        // player 1.22.0
+        'elementSeekCount',
+        'reconnectCount',
+        'reconnectDuration',
+        'dvrTime',
+        'attempt',
+        'delayMs',
+        'elapsedMs',
+        'longOutage',
+        'networkState',
+        'readyState',
+        'online',
+        'sourceHost',
+        'reconnecting',
     ];
 
     /**
@@ -118,6 +153,23 @@ final readonly class BeaconPayload
         'segmentThroughputBps' => 'numeric',
         'decodedFrames' => 'numeric',
         'droppedFrames' => 'numeric',
+
+        // Player 1.22.0: cumulative counters on heartbeat and both viewEnds
+        // (dvrTime on live views only), reconnecting/recovered event data, and
+        // error context. `duration` on recovered is the outage in ms.
+        'elementSeekCount' => 'numeric',
+        'reconnectCount' => 'numeric',
+        'reconnectDuration' => 'numeric',
+        'dvrTime' => 'numeric',
+        'attempt' => 'numeric',
+        'delayMs' => 'numeric',
+        'elapsedMs' => 'numeric',
+        'longOutage' => 'boolean',
+        'networkState' => 'numeric',
+        'readyState' => 'numeric',
+        'online' => 'boolean',
+        'sourceHost' => 'string',
+        'reconnecting' => 'boolean',
 
         // every beacon (player 1.19.3)
         'beaconSeq' => 'numeric',
@@ -284,6 +336,53 @@ final readonly class BeaconPayload
     }
 
     /**
+     * A known key's value as a fresh parse of the received beacon would classify it:
+     * get(), or, only for a payload restored from an older package's queue, the
+     * value of a name promoted since that its classification left in $custom
+     * (`reconnecting`, `errorSeverity`), captured when the job was restored. Decided
+     * by provenance, never by name and type: a key a pipeline puts in $custom with
+     * withCustom() stays a custom dimension, and server ownership does not remove a
+     * captured browser value, just as it leaves a known field. Reads only; the
+     * queued classification, $bodyHash and the event key are unchanged.
+     */
+    public function knownValue(string $key): int|float|string|bool|null
+    {
+        if ($this->has($key)) {
+            return $this->get($key);
+        }
+
+        return isset($this->legacyKnown) ? ($this->legacyKnown[$key] ?? null) : null;
+    }
+
+    /**
+     * Whether this is an error that ended its view. From player 1.22.0 a fatal error
+     * the provider will reconnect from is sent with `fatal: true`, `errorSeverity:
+     * 'warning'` and `reconnecting: true`, and the view stays open, so `fatal` alone
+     * no longer means the view failed. `errorSeverity` decides when present; a player
+     * without it (before 1.20.0) falls back to `fatal`. A reconnecting error is never
+     * fatal. Read through knownValue(), so a job queued by an older package decides
+     * the same as a fresh parse of the same body.
+     */
+    public function isFatalError(): bool
+    {
+        if ($this->event !== 'error' || $this->isReconnectingError()) {
+            return false;
+        }
+
+        $severity = $this->knownValue('errorSeverity');
+
+        return is_string($severity) ? $severity === 'fatal' : $this->knownValue('fatal') === true;
+    }
+
+    /**
+     * Whether this is an error the provider is auto-reconnecting from (player 1.22.0).
+     */
+    public function isReconnectingError(): bool
+    {
+        return $this->event === 'error' && $this->knownValue('reconnecting') === true;
+    }
+
+    /**
      * The same beacon with its custom dimensions replaced, for a ProcessesBeacon
      * that redacts before storage. A key the server context owns is left out, one it
      * owns as null included.
@@ -292,11 +391,11 @@ final readonly class BeaconPayload
      */
     public function withCustom(array $custom): self
     {
-        return new self(
+        return (new self(
             $this->event, $this->timestamp, $this->viewId, $this->sessionId, $this->viewerId,
             $this->videoId, $this->context, $this->fields, array_diff_key($custom, array_flip($this->owned)),
             $this->ip, $this->server, $this->owned, $this->bodyHash,
-        );
+        ))->carryLegacy($this);
     }
 
     /**
@@ -339,11 +438,11 @@ final readonly class BeaconPayload
             }
         }
 
-        return new self(
+        return (new self(
             $this->event, $this->timestamp, $this->viewId, $this->sessionId, $this->viewerId,
             $this->videoId, $this->context, $this->fields, $custom, $this->ip, $kept, $owned,
             $this->bodyHash,
-        );
+        ))->carryLegacy($this);
     }
 
     /**
@@ -351,11 +450,11 @@ final readonly class BeaconPayload
      */
     public function withIp(?string $ip): self
     {
-        return new self(
+        return (new self(
             $this->event, $this->timestamp, $this->viewId, $this->sessionId, $this->viewerId,
             $this->videoId, $this->context, $this->fields, $this->custom, $ip, $this->server,
             $this->owned, $this->bodyHash,
-        );
+        ))->carryLegacy($this);
     }
 
     /**
@@ -397,13 +496,18 @@ final readonly class BeaconPayload
      */
     public function __serialize(): array
     {
-        return get_object_vars($this);
+        // Older packages restore by named keys and ignore the marker and the map.
+        return [...get_object_vars($this), 'serialVersion' => self::SERIAL_VERSION];
     }
 
     /**
      * Restores a queued beacon. A job queued by an older version of the package lacks
      * the newer properties; they get the values a fresh beacon would have, so jobs in
      * the queue across an upgrade still process.
+     *
+     * Its classification is kept as queued. Only when the data lacks this version's
+     * marker are the known-typed values of names promoted since captured for
+     * knownValue(); custom, get() and the hash are untouched.
      *
      * @param  array<string, mixed>  $data
      */
@@ -426,6 +530,40 @@ final readonly class BeaconPayload
             owned: array_values(array_map('strval', (array) ($data['owned'] ?? array_keys($server)))),
             bodyHash: isset($data['bodyHash']) ? (string) $data['bodyHash'] : null,
         );
+
+        $legacy = [];
+
+        if (isset($data['serialVersion'])) {
+            // Written by this version: only a map it captured itself, carried as is.
+            foreach ((array) ($data['legacyKnown'] ?? []) as $key => $value) {
+                if (is_string($key) && is_scalar($value)) {
+                    $legacy[$key] = $value;
+                }
+            }
+        } else {
+            // Queued by an older package: promoted names it classified as custom.
+            foreach (self::LEGACY_HASH_CUSTOM as $key) {
+                $value = $this->custom[$key] ?? null;
+
+                if (! $this->has($key) && self::isType($value, self::FIELDS[$key])) {
+                    $legacy[$key] = self::field($value);
+                }
+            }
+        }
+
+        if ($legacy !== []) {
+            $this->legacyKnown = $legacy;
+        }
+    }
+
+    /** Give a with*() copy this payload's captured legacy values, if it has any. */
+    private function carryLegacy(self $from): self
+    {
+        if (isset($from->legacyKnown)) {
+            $this->legacyKnown = $from->legacyKnown; // @phpstan-ignore property.readOnlyAssignNotInConstructor
+        }
+
+        return $this;
     }
 
     /**

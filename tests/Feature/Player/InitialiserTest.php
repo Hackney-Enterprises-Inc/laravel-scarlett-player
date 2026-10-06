@@ -112,6 +112,8 @@ it('turns a full module config into core options and plugins', function (): void
             'isLive' => false,
             'apiKey' => 'test-beacon-key',
             'videoTitle' => 'Main event',
+            'anonymous' => false,
+            'respectDoNotTrack' => false,
         ])
         ->and($plugins['clips']['config'])->toBe([
             'mediaId' => 'video-1',

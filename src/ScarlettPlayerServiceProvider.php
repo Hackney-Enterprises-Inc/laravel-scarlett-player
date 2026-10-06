@@ -203,6 +203,10 @@ class ScarlettPlayerServiceProvider extends ServiceProvider
             __DIR__.'/../database/migrations/0001_01_01_000005_add_signals_to_scarlett_tables.php' => database_path('migrations/0001_01_01_000005_add_signals_to_scarlett_tables.php'),
         ], 'scarlett-migrations-signals');
 
+        $this->publishes([
+            __DIR__.'/../database/migrations/0001_01_01_000006_add_reconnects_to_scarlett_tables.php' => database_path('migrations/0001_01_01_000006_add_reconnects_to_scarlett_tables.php'),
+        ], 'scarlett-migrations-reconnects');
+
         RateLimiter::for('scarlett-beacons', fn (Request $request): Limit => $this->limitFrom(
             config('scarlett-player.beacons.throttle'),
         )->by((string) $request->ip()));
@@ -235,6 +239,7 @@ class ScarlettPlayerServiceProvider extends ServiceProvider
             BeaconIpColumnCheck::class,
             Doctor\Checks\BeaconSeqColumnCheck::class,
             Doctor\Checks\BeaconSignalsColumnsCheck::class,
+            Doctor\Checks\BeaconReconnectColumnsCheck::class,
             BeaconContextCheck::class,
         ];
     }

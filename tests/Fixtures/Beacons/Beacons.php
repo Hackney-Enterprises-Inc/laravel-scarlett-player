@@ -96,7 +96,8 @@ final class Beacons
     }
 
     /**
-     * The viewEnd onBeforeUnload() sends through sendBeacon: the subset, with no
+     * The viewEnd onBeforeUnload() sent through sendBeacon before player 1.22.0 (from
+     * 1.22.0 the unload variant carries the full field set): the subset, with no
      * qoeScore, rebufferRatio, qualityChanges, pauseCount, pauseDuration, seekCount,
      * errorCount or completionRate.
      */
