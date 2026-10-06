@@ -7,7 +7,7 @@ use Hei\ScarlettPlayer\Tests\Fixtures\Provider\ArrayResolver;
 
 /*
  * The builder's chapters, run through the chapters plugin's own normaliseChapters()
- * (lifted from the published 1.19.1 build, tests/Fixtures/embed/chapters/). What the
+ * (lifted from the published 1.22.0 build, tests/Fixtures/embed/chapters/). What the
  * player resolves is what the viewer sees on the progress bar, so this is where a wrong
  * key name shows up as a chapter running through a gap.
  */
@@ -30,7 +30,7 @@ function resolveThroughPlayer(array $chapters): array
 
     $output = (string) shell_exec(sprintf(
         'node %s %s 2>&1',
-        escapeshellarg(__DIR__.'/../../Fixtures/embed/chapters/1.19.1/normalise.mjs'),
+        escapeshellarg(__DIR__.'/../../Fixtures/embed/chapters/1.22.0/normalise.mjs'),
         escapeshellarg(json_encode($emitted, JSON_THROW_ON_ERROR)),
     ));
 

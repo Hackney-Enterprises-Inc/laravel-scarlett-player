@@ -100,7 +100,7 @@ it('replaces custom dimensions and the address without touching anything else', 
         ->and($payload->custom)->toBe(['email' => 'viewer@example.com']);
 });
 
-it('knows every key the analytics plugin sends through player 1.20.0', function (): void {
+it('knows every key the analytics plugin sends through player 1.22.0', function (): void {
     // index.ts sendBeacon()/sendUnloadBeacon() base keys, then every data object
     // the plugin passes (heartbeat, videoStart, rebufferEnd, pause, rebufferStart,
     // seeking, error, qualityChange, both viewEnd variants, the latency summary).
@@ -118,6 +118,9 @@ it('knows every key the analytics plugin sends through player 1.20.0', function 
         'attempts', 'retriesExhausted', 'reconnectExhausted', 'timedOut', 'warningCount',
         'fatalErrorCategory', 'segmentCount', 'segmentBytes', 'segmentLoadAvgMs',
         'segmentLoadMaxMs', 'segmentErrors', 'segmentThroughputBps', 'decodedFrames', 'droppedFrames',
+        // 1.22.0: cumulative counters, reconnecting/recovered and error context
+        'elementSeekCount', 'reconnectCount', 'reconnectDuration', 'dvrTime', 'attempt', 'delayMs',
+        'elapsedMs', 'longOutage', 'networkState', 'readyState', 'online', 'sourceHost', 'reconnecting',
     ];
 
     expect(array_keys([...BeaconPayload::CONTEXT, ...BeaconPayload::FIELDS]))->toEqualCanonicalizing($shipped);
@@ -521,4 +524,57 @@ it('preserves the legacy hash and custom interleaving for all signal promotions'
     expect($payload->bodyHash)->toBe(sha1(json_encode($legacyBody, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)))
         ->and($payload->custom)->toBe(['tenant' => 'a', 'other' => 1])
         ->and($payload->withServer(['anonymous' => null])->withCustom([])->bodyHash)->toBe($payload->bodyHash);
+});
+
+describe('player 1.22.0 fields', function (): void {
+    it('recognizes the new keys by type and keeps wrong types as custom', function (): void {
+        $payload = Beacons::payload('error', 0, [
+            'reconnecting' => true, 'online' => false, 'sourceHost' => 'cdn.example.test', 'networkState' => 2,
+            'readyState' => 1, 'elementSeekCount' => 4, 'dvrTime' => 1500, 'attempt' => '3', 'longOutage' => 'yes',
+        ]);
+
+        expect($payload->fields)->toBe([
+            'reconnecting' => true, 'online' => false, 'sourceHost' => 'cdn.example.test', 'networkState' => 2,
+            'readyState' => 1, 'elementSeekCount' => 4, 'dvrTime' => 1500,
+        ])->and($payload->custom)->toBe(['attempt' => '3', 'longOutage' => 'yes']);
+    });
+
+    it('treats null bitrates and completion rate as absent without moving the hash', function (): void {
+        $withNulls = Beacons::payload('viewEnd', 0, ['avgBitrate' => null, 'maxBitrate' => null, 'completionRate' => null, 'watchTime' => 5]);
+        $without = Beacons::payload('viewEnd', 0, ['watchTime' => 5]);
+
+        expect($withNulls->has('avgBitrate'))->toBeFalse()
+            ->and($withNulls->has('completionRate'))->toBeFalse()
+            ->and($withNulls->custom)->toBe([])
+            ->and($withNulls->bodyHash)->toBe($without->bodyHash);
+    });
+
+    it('preserves the legacy hash and custom interleaving for the 1.22.0 promotions', function (): void {
+        $body = Beacons::body('heartbeat', 0, [
+            'tenant' => 'a', 'reconnectCount' => 1, 'watchTime' => 9, 'elementSeekCount' => 2, 'other' => 1,
+            'dvrTime' => 300, 'reconnectDuration' => 400, 'reconnecting' => true, 'sourceHost' => 'cdn.example.test',
+            'attempt' => 2, 'delayMs' => 1000, 'elapsedMs' => 0, 'longOutage' => true, 'online' => true,
+            'networkState' => 2, 'readyState' => 1,
+        ]);
+        $legacyKnown = array_intersect_key($body, array_flip(['watchTime']));
+        $legacyCustom = array_diff_key($body, array_flip([...BeaconPayload::IDENTITY, ...array_keys(BeaconPayload::CONTEXT), 'watchTime']));
+        $legacyBody = array_replace(array_intersect_key($body, array_flip(BeaconPayload::IDENTITY)), array_intersect_key($body, BeaconPayload::CONTEXT), $legacyKnown, $legacyCustom);
+        $payload = BeaconPayload::fromArray($body);
+
+        expect($payload->bodyHash)->toBe(sha1(json_encode($legacyBody, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)))
+            ->and($payload->custom)->toBe(['tenant' => 'a', 'other' => 1])
+            ->and(unserialize(serialize($payload))->bodyHash)->toBe($payload->bodyHash);
+    });
+
+    it('decides fatality from severity and the reconnecting marker', function (string $event, array $fields, bool $fatal, bool $reconnecting): void {
+        $payload = Beacons::payload($event, 0, $fields);
+
+        expect($payload->isFatalError())->toBe($fatal)->and($payload->isReconnectingError())->toBe($reconnecting);
+    })->with([
+        'reconnecting warning' => ['error', ['fatal' => true, 'errorSeverity' => 'warning', 'reconnecting' => true], false, true],
+        'terminal' => ['error', ['fatal' => true, 'errorSeverity' => 'fatal'], true, false],
+        'severity wins over fatal' => ['error', ['fatal' => false, 'errorSeverity' => 'fatal'], true, false],
+        'legacy fatal' => ['error', ['fatal' => true], true, false],
+        'not an error' => ['viewEnd', ['fatal' => true, 'reconnecting' => true], false, false],
+    ]);
 });

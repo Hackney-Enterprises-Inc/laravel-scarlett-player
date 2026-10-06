@@ -9,7 +9,7 @@ use Hei\ScarlettPlayer\Tests\Fixtures\Provider\ArrayResolver;
 use Illuminate\View\ViewException;
 
 /** The published embed README, the only source of data-* attribute names (see its PROVENANCE.md). */
-const EMBED_README = __DIR__.'/../../Fixtures/embed/attributes/1.19.1/README.md';
+const EMBED_README = __DIR__.'/../../Fixtures/embed/attributes/1.22.0/README.md';
 
 beforeEach(function (): void {
     ScarlettPlayer::fake()->withMedia(ArrayResolver::source('video-1'));
@@ -90,7 +90,7 @@ it('renders embed mode as data attributes and the pinned bundle', function (): v
 });
 
 it('emits only data-* names the embed README documents', function (): void {
-    $readme = (string) file_get_contents(EMBED_README).file_get_contents(__DIR__.'/../../Fixtures/embed/attributes/signals-candidate/README.md');
+    $readme = (string) file_get_contents(EMBED_README);
     $html = (string) $this->blade(
         '<x-scarlett-player media="video-1" mode="embed" autoplay muted loop :controls="false" :start-time="5" title="T" poster="https://img.example.test/p.jpg" brand-color="#111" brand-text-color="#fff" analytics share-url="https://host.test/watch/1" />'
     );
@@ -210,7 +210,7 @@ it('loads the chapters and clips addons after the bundle, once each, in embed mo
         ->and($html)->toContain('data-chapters="[');
 
     foreach (['data-clips-endpoint', 'data-clips-csrf', 'data-clips-media-id', 'data-captions', 'data-chapters'] as $name) {
-        expect((string) file_get_contents(EMBED_README).file_get_contents(__DIR__.'/../../Fixtures/embed/attributes/signals-candidate/README.md'))->toContain("`{$name}`");
+        expect((string) file_get_contents(EMBED_README))->toContain("`{$name}`");
     }
 });
 

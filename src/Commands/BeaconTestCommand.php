@@ -13,9 +13,12 @@ use Illuminate\Support\Str;
 use Throwable;
 
 /**
- * Posts a synthetic viewStart, heartbeat and viewEnd through each key path the
- * player uses: the X-API-Key header (fetch) and the api_key query parameter (the
- * unload sendBeacon, which cannot carry a header). Every one must answer 204.
+ * Posts a synthetic view (viewStart, heartbeat, reconnecting, recovered, viewEnd)
+ * through each key path the player uses: the X-API-Key header (fetch) and the api_key
+ * query parameter (the unload sendBeacon, which cannot carry a header). Every one must
+ * answer 204. The header view is VOD (a 60 second media duration) and ends
+ * `abandoned`; the query view is live and ends `liveEnded`. Bitrates are null, as player 1.22.0 sends them until a quality
+ * change reports one.
  *
  * The beacons are real: they are queued and stored like any other, under a view id
  * starting with `scarlett-beacon-test-`. This proves the route, the key and the
@@ -50,11 +53,11 @@ class BeaconTestCommand extends Command
         $rows = [];
         $failed = false;
 
-        foreach (['header', 'query'] as $transport) {
+        foreach (['header' => false, 'query' => true] as $transport => $live) {
             $viewId = self::VIEW_PREFIX.Str::lower(Str::random(12));
             $timestamp = (int) floor(microtime(true) * 1000);
 
-            foreach ($this->beacons($viewId, $timestamp) as $body) {
+            foreach ($this->beacons($viewId, $timestamp, $live) as $body) {
                 $request = $http->asJson()->timeout(10);
                 $endpoint = $target;
 
@@ -92,9 +95,13 @@ class BeaconTestCommand extends Command
     }
 
     /**
+     * One view in the player 1.22.0 shape: counters on the heartbeat and viewEnd, a
+     * reconnect outage, null bitrates, and on a live view `liveEnded`, a null
+     * completionRate and dvrTime.
+     *
      * @return list<array<string, mixed>>
      */
-    private function beacons(string $viewId, int $timestamp): array
+    private function beacons(string $viewId, int $timestamp, bool $live): array
     {
         $context = [
             'viewId' => $viewId,
@@ -102,7 +109,7 @@ class BeaconTestCommand extends Command
             'viewerId' => $viewId,
             'videoId' => 'scarlett-beacon-test',
             'videoTitle' => 'scarlett:beacon:test',
-            'isLive' => false,
+            'isLive' => $live,
             'playerVersion' => 'beacon-test',
             'playerName' => 'scarlett-player',
             'browser' => 'artisan',
@@ -113,10 +120,22 @@ class BeaconTestCommand extends Command
             'connectionType' => 'unknown',
         ];
 
+        $metrics = fn (int $watchTime): array => [
+            'watchTime' => $watchTime, 'playTime' => 0, 'rebufferCount' => 0, 'rebufferDuration' => 0,
+            'reconnectCount' => 1, 'reconnectDuration' => 1, 'avgBitrate' => null, 'maxBitrate' => null,
+            'qualityChanges' => 0, 'pauseCount' => 0, 'pauseDuration' => 0, 'seekCount' => 0,
+            'elementSeekCount' => 0, 'errorCount' => 0, 'warningCount' => 0, 'qoeScore' => 100, 'qoeVersion' => 2,
+            ...($live ? ['dvrTime' => 0] : []),
+        ];
+
         return [
             ['event' => 'viewStart', 'timestamp' => $timestamp, ...$context],
-            ['event' => 'heartbeat', 'timestamp' => $timestamp + 1, ...$context, 'watchTime' => 1, 'playTime' => 0, 'rebufferCount' => 0, 'rebufferDuration' => 0, 'avgBitrate' => 0, 'qoeScore' => 100],
-            ['event' => 'viewEnd', 'timestamp' => $timestamp + 2, ...$context, 'watchTime' => 2, 'playTime' => 0, 'startupTime' => null, 'rebufferCount' => 0, 'rebufferDuration' => 0, 'avgBitrate' => 0, 'maxBitrate' => 0, 'exitType' => 'abandoned'],
+            // duration is seconds; a live HLS source reports 0, which the store ignores.
+            ['event' => 'heartbeat', 'timestamp' => $timestamp + 1, ...$context, ...$metrics(1), 'currentTime' => 0, 'duration' => $live ? 0 : 60],
+            ['event' => 'reconnecting', 'timestamp' => $timestamp + 2, ...$context, 'reconnectCount' => 1, 'attempt' => 1],
+            ['event' => 'recovered', 'timestamp' => $timestamp + 3, ...$context, 'duration' => 1, 'reconnectCount' => 1, 'attempt' => 1],
+            ['event' => 'viewEnd', 'timestamp' => $timestamp + 4, ...$context, ...$metrics(4), 'startupTime' => null, 'rebufferRatio' => 0,
+                'exitType' => $live ? 'liveEnded' : 'abandoned', 'completionRate' => $live ? null : 0],
         ];
     }
 }

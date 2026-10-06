@@ -105,9 +105,10 @@ recipe above.
 
 **Deploy the ingest first.** For tsp-web (and other existing hosts): run
 `composer update hei/laravel-scarlett-player` to 0.3.0, add the column and index, deploy
-the ingest, then move the host's `@scarlett-player/*` packages to 1.19.3. The package's
-`player.player_version` remains **1.19.1**. Signals support targets **1.20.0**,
-pending published-artifact verification, and uses the additional migration below. See
+the ingest, then move the host's `@scarlett-player/*` packages to 1.19.3. In 0.3.0 the
+package's `player.player_version` remained **1.19.1** (0.5.0 moves it to **1.22.0**; see
+[Player 1.22](#player-122-and-upgrading-from-04)). Signals support uses the additional
+migration below. See
 [Compatibility](#compatibility) for the count changes to expect from player 1.19.3.
 
 ### Publish tags
@@ -117,6 +118,7 @@ pending published-artifact verification, and uses the additional migration below
 | `scarlett-config` | `config/scarlett-player.php` |
 | `scarlett-migrations` | All package migrations, for fresh installations only |
 | `scarlett-migrations-signals` | Only the additive signals migration, for upgrades from 0.3 |
+| `scarlett-migrations-reconnects` | Only the additive player 1.22 migration (reconnects, element seeks, DVR time, error context), for upgrades from 0.4 |
 | `scarlett-views` | The embed page and Blade component views, to `resources/views/vendor/scarlett` |
 | `scarlett-js` | The JS initialiser, to `resources/js/vendor/scarlett-player/init.js` |
 
@@ -333,8 +335,9 @@ can refuse a beacon are the `event`, the four ids (`viewId`, `sessionId`, `viewe
   player spreads `customDimensions` among its own keys, so a dimension called
   `duration` arrives under a known name).
 - A key sent as `null` is treated as absent, except `qoeScore`: explicit null clears
-  the score so access-denied views are excluded from averages. Long strings are
-  truncated to their column.
+  the score so access-denied views are excluded from averages. So player 1.22's null
+  `avgBitrate`, `maxBitrate` and (live) `completionRate` never overwrite a known value.
+  Long strings are truncated to their column.
 
 ### What is stored
 
@@ -360,12 +363,13 @@ merged per field, never per event:
 |---|---|---|
 | Set-once | identity and environment except `is_live`, `started_at`, `first_frame_at`, `ended_at`, `exit_type` | the first beacon to arrive with a value keeps it; a second `viewEnd` cannot move `ended_at` |
 | True wins | `is_live` | any beacon with `isLive: true` sets it and nothing clears it; `false` only fills an empty column. A live `viewStart` fires before the player has read the playlist and says `false` (from player 1.18 it sends `null`, treated as absent), and a live stream that becomes a replay in the same session stays live |
-| Monotonic | `watch_ms`, `play_ms`, `rebuffer_ms`, `rebuffer_count`, `seek_count`, `pause_count`, `quality_changes`, `error_count`, `max_bitrate`, `startup_ms` | the larger value wins, whatever the order |
-| Latest by timestamp | `qoe_score`, `avg_bitrate`, `rebuffer_ratio`, `completion_rate`, `current_position`, the live latency summary | written when the beacon is at least as new as the one that wrote that column (a `*_at` stamp per column); `metrics_at` is the newest |
-| Fill if absent | every column | a key absent from the beacon never touches its column: the unload `viewEnd` has no `qoeScore`, so the last heartbeat's stays |
+| Monotonic | `watch_ms`, `play_ms`, `rebuffer_ms`, `rebuffer_count`, `seek_count`, `pause_count`, `quality_changes`, `error_count`, `max_bitrate`, `startup_ms`, `warning_count`, `element_seek_count`, `reconnect_count`, `reconnect_ms`, `dvr_ms`, `pause_ms` | the larger value wins, whatever the order |
+| Latest by timestamp | `qoe_score`, `avg_bitrate`, `rebuffer_ratio`, `completion_rate`, `current_position`, `media_duration`, the live latency summary | written when the beacon is at least as new as the one that wrote that column (a `*_at` stamp per column); `metrics_at` is the newest |
+| Fill if absent | every column | a key absent from the beacon, or null, never touches its column: a null `avgBitrate` leaves the last known one |
 
-Two `viewEnd` beacons for one view (the player can send both) merge: the ended variant
-fills what the unload variant lacked. Counters are never incremented from the event
+Two `viewEnd` beacons for one view (the player can send both) merge. Before player 1.22
+the unload variant was a subset and the other filled what it lacked; from 1.22 both
+carry the same fields, and the first to arrive keeps `ended_at` and `exit_type`. Counters are never incremented from the event
 stream; they are the player's own running totals. `custom` merges key by key, with a
 stamp per key (`custom_stamps`): each key keeps the value from the newest beacon that
 sent that key, so an older beacon delivered late still wins a key no newer beacon
@@ -386,8 +390,8 @@ key on Postgres, which refuses to compare `varchar` with `integer`.
 
 #### Signals and upgrading from 0.3
 
-The default player pin remains **1.19.1** until the 1.20.0 npm and CDN artifacts
-are available and verified. Signals support is prepared for 1.20.0.
+In 0.4.0 the default player pin remained **1.19.1**; signals support targeted 1.20.0.
+Package 0.5.0 pins **1.22.0**, which carries the signals contract.
 
 For an existing 0.3 installation that has not run the signals migration, publish
 **only** the additive migration with the dedicated tag below. It adds columns to
@@ -413,10 +417,10 @@ migration backfill; their original values remain in the optional raw log. Column
 availability is cached per store instance: restart workers after migrating. Skipped
 measurements are not automatically replayed into the new columns.
 
-Deploy ingest and migrate first, then enable the 1.20.0 player once its npm and CDN
-artifacts are available. Update `player.player_version` and module npm dependencies
-together, and republish `scarlett-js` if the host uses the initialiser. Package
-defaults do not replace a host's published config or JavaScript.
+Deploy ingest and migrate first, then move the player (1.20.0 or later; 0.5.0 pins
+1.22.0). Update `player.player_version` and module npm dependencies together, and
+republish `scarlett-js` if the host uses the initialiser. Package defaults do not
+replace a host's published config or JavaScript.
 
 The recognized signal fields remain at the top level in the raw payload. Unknown
 keys and known names carrying wrong types still go to `custom`. Existing custom
@@ -454,6 +458,111 @@ $averages = DB::table('scarlett_views')
 SQL AVG excludes null scores and includes a real zero. Do not coalesce null scores
 to zero or use a truthiness filter that removes zeroes. A group with only access
 denials has a null average. Compare QoE v1 and v2 as separate series.
+
+#### Player 1.22 and upgrading from 0.4
+
+Package 0.5.0 ingests everything `@scarlett-player/analytics` 1.22.0 sends and moves
+the default `player.player_version` to **1.22.0** (from 1.19.1). Verified against the
+published npm packages and the CDN's `v1.22.0/` directory (see
+[Compatibility](#compatibility)).
+
+Upgrade order: update the package, publish and run the migration below, restart
+workers, deploy the ingest, then move the player:
+
+- **Embed mode** follows `player.player_version`: with the default (no
+  `SCARLETT_PLAYER_VERSION`, no published config overriding it) the embed page and
+  component load `v1.22.0/embed.js` and its addons as soon as the package deploys. A
+  host that published the config or sets the env var keeps its own version until it
+  changes it.
+- **Module mode** uses the host's own npm dependencies: move every `@scarlett-player/*`
+  package to 1.22.0 together, and set `SCARLETT_PLAYER_VERSION=1.22.0` if you pin it.
+  The `scarlett-js` initialiser did not change in 0.5.0.
+- From the 1.20.0 gate the builder writes the privacy flags explicitly: module mode's
+  analytics config gains `anonymous: false` and `respectDoNotTrack: false`, and embed
+  mode emits `data-analytics-anonymous="false"` and `data-analytics-respect-dnt="false"`
+  (the 1.22.0 embed treats any value other than `"false"` as on). Nothing turns
+  privacy on unless you configure it.
+
+For an existing installation (signals migration already run), publish **only** the
+additive 1.22 migration. Like the signals tag, it keeps a stable filename, so
+repeating the command does not publish a second copy. Fresh installations use
+`scarlett-migrations` once.
+
+```bash
+php artisan vendor:publish --tag=scarlett-migrations-reconnects
+php artisan migrate
+php artisan queue:restart
+php artisan scarlett:doctor
+```
+
+Until the migration runs, ingest continues and skips the new columns (the optional
+raw log keeps the values); the `beacon reconnect columns` doctor check warns. The
+migration also adds `pause_ms` and `media_duration` (with `media_duration_at`). Column
+availability is cached per store instance, so restart workers after migrating.
+
+| Field | Persistence and merge |
+|---|---|
+| `elementSeekCount` | `element_seek_count`, monotonic. Every element seek that was not a player seek's echo, uncoalesced |
+| `reconnectCount` | `reconnect_count`, monotonic. Outages, not attempts; also carried by `reconnecting` and `recovered` |
+| `reconnectDuration` | `reconnect_ms`, monotonic, an open outage included. After the first frame an outage is also a rebuffer, so it overlaps `rebuffer_ms`: do not add the two |
+| `dvrTime` | `dvr_ms`, monotonic, live views only (NULL on VOD): play time behind the live edge after a seek |
+| `pauseDuration` | `pause_ms`, monotonic: time paused, a pause still open included. Sent on heartbeats and both `viewEnd`s from 1.22 (only the ended `viewEnd` before), so it was a known field already; it simply had no column |
+| `duration` (heartbeat) | `media_duration`, seconds, latest by timestamp under `media_duration_at`. Taken **only from `heartbeat`**: `recovered` and `rebufferEnd` reuse `duration` for milliseconds and never touch it. Only a finite value above 0 on a beacon not saying `isLive: true` is stored, so a `load()` (which zeroes it) or a live source (0, `Infinity` sent as `null`, or a sliding window) never overwrites a known length. **Meaningful only where `is_live` is not true**: the guard is per beacon, and a live view's heartbeats before classification carry the initial `NaN` or a reset 0 (both unusable), because providers classify live before they write the window-length duration. A host that forces `isLive: false` on a live source, or a provider that reports a finite duration before classifying, can still leave a window length here |
+| `networkState`, `readyState`, `online`, `sourceHost`, `reconnecting` | Corresponding snake_case columns on `scarlett_view_errors`; absent values stay null. `sourceHost` is a host name only |
+| `attempt`, `delayMs`, `elapsedMs`, `longOutage` | Raw log only (`reconnecting` and `recovered` events) |
+
+What changes for queries and listeners:
+
+- **Errors and reconnects.** A fatal error the provider reconnects from arrives with
+  `fatal: true`, `errorSeverity: 'warning'` and `reconnecting: true`, and the view
+  stays open. `scarlett_view_errors.fatal` now records whether the error ended its
+  view: `errorSeverity` decides when present (players before 1.20 fall back to
+  `fatal`), and a reconnecting error is never fatal. The wire value stays in the raw
+  log. Count failures with `fatal = true` or `severity = 'fatal'`, and in listeners
+  use `PlaybackErrorReported::isFatal()`, not `$payload->get('fatal')`.
+  `errorCategory` can now be `network`, `media` or `source` from an element
+  MediaError code alone.
+- **New events.** `reconnecting` (once per outage, plus once at the first long-outage
+  repeat) and `recovered` (`duration` is the outage in ms, unlike the heartbeat's
+  `duration` in seconds) are stored in the raw log and merge their `reconnectCount`.
+  They are not errors, write no `scarlett_view_errors` row, and never end a view.
+- **`seek_count`** now counts player seeks plus coalesced element seek bursts (element
+  seeks within 2 s of each other count once); `element_seek_count` has every one.
+- **Exit types.** `exit_type` gains `liveEnded`: the element ended on a live view.
+  It is stored as a plain string like the others (`completed`, `abandoned`, `error`,
+  `background`); queries that read `completed` as "watched to the end" should treat
+  live views and `liveEnded` separately. Live views now report `completion_rate`
+  NULL; it is not set from any other beacon.
+- **Bitrates.** `avg_bitrate` and `max_bitrate` stay NULL until the player knows a
+  bitrate (native HLS, MP4 and WHEP often never do). Rows written by earlier players
+  hold **0 for an unknown bitrate**; the migration does not rewrite them, because a
+  stored 0 cannot be told apart from a measured one. Exclude 0 as well as NULL when
+  averaging bitrate across player versions.
+- **Unload `viewEnd`.** It now carries the same fields as the ended `viewEnd`
+  (counters, `rebufferRatio`, `qoeScore`, `qoeVersion`, `completionRate`).
+- **Percent watched.** `completion_rate` is the player's own figure on the final
+  `viewEnd`. For a figure from the view row at any point, divide position or play
+  time by `media_duration`: `current_position / media_duration * 100` (where the
+  viewer is) or `play_ms / 1000 / media_duration * 100` (how much was played, which
+  exceeds 100 on rewatching). Both are NULL when no heartbeat reported a usable
+  duration (live, or a view shorter than one heartbeat). Keep only views whose
+  `is_live` is not true, NULL included (`where(fn ($q) => $q->whereNull('is_live')
+  ->orWhere('is_live', false))`; a plain `whereNot` drops NULL), never divide by
+  zero, and do not coalesce it to 0. Rows written before the migration have no `media_duration`.
+- **Live latency** summaries exclude readings before the first frame and while
+  behind the edge, and can be absent on a live view.
+- **Idle views.** A view idle for 30 minutes ends with `abandoned`; later playback
+  arrives under a new `viewId`, a new row. Nothing is sent for a view after its
+  `viewEnd`. `browser` can be `Instagram`, `Facebook`, `Google App`, `LinkedIn` or
+  `TikTok`.
+- **Custom stores.** The `BeaconStore` contract and `BeaconPayload` keep their shape.
+  The fields above moved from `$payload->custom` to the known fields
+  (`$payload->get('reconnectCount')`); a driver that read them from `custom` must
+  switch. Deduplication hashes are unchanged. A queued job serialized before the
+  upgrade keeps its old classification; read promoted fields with
+  `$payload->knownValue('reconnectCount')` to get the same value from such a job as
+  from a fresh one, and decide whether an error ended its view with
+  `$payload->isFatalError()`.
 
 ### Player privacy options
 
@@ -773,7 +882,7 @@ final class DropEmail implements ProcessesBeacon
 | `BeaconReceived` | once per delivery, after the pipeline, with the payload the steps let through; a dropped beacon fires nothing. Not deduplicated: a redelivered job fires it again |
 | `ViewStarted` | once, when a view is first stored (by whichever beacon arrives first) |
 | `ViewEnded` | once, when a view first gains an end |
-| `PlaybackErrorReported` | once per error beacon actually stored |
+| `PlaybackErrorReported` | once per error beacon actually stored, warnings and reconnecting errors included. Use `$event->isFatal()` (severity fatal, not reconnecting) to decide playback failed, never the payload's `fatal`; `$event->isReconnecting()` marks a player 1.22 reconnect |
 
 The last three come from `EloquentBeaconStore`; a host store fires its own.
 
@@ -784,15 +893,17 @@ php artisan scarlett:beacon:test [--url=https://app.example.com/api/scarlett/bea
 php artisan scarlett:views:prune [--days=30]      # --days overrides retention.events
 ```
 
-`scarlett:beacon:test` posts a synthetic `viewStart`, `heartbeat` and `viewEnd` through the
-header path and again through the query-string path, and fails unless every one is
-answered `204`. The beacons are real (queued and stored under a view id starting
+`scarlett:beacon:test` posts a synthetic view (`viewStart`, `heartbeat`, `reconnecting`,
+`recovered`, `viewEnd`, in the player 1.22 shape with null bitrates) through the header
+path (a VOD view ending `abandoned`) and again through the query-string path (a live
+view ending `liveEnded`), and fails unless every one is answered `204`. The beacons are real (queued and stored under a view id starting
 `scarlett-beacon-test-`). It proves the route, the key and the body; it does not prove
 browser CORS.
 
 `scarlett:doctor` adds, for beacons: the key, the store binding, the route, the CORS
 recipe, the beacon queue (warns when it shares a queue with clips), the IP column,
-server-side context and the raw-log `seq` column.
+server-side context, the raw-log `seq` column, and the signals and player 1.22
+(`beacon reconnect columns`) upgrade columns.
 
 ### Testing against beacons
 
@@ -812,10 +923,12 @@ Bind `FakeBeaconStore` yourself for `assertRecorded()`, `assertRecordedCount()` 
 `assertNothingRecorded()` on `BeaconPayload` objects. The player's wire fixtures for
 1.19.1 are under `tests/Fixtures/wire/1.19.1/`, captured from the real transports by the
 player repo's harness: every beacon event per transport, the three `viewEnd` variants, a
-live session and a clip create and retry. Additive 1.19.3 request envelopes under
-`tests/Fixtures/wire/1.19.3/` cover `viewStart` with `beaconSeq` and both `seeking`
-sources. These are **derived (recapture owed)** from the player source, not captured
-transports; they do not replace the captured 1.19.1 set or change the player pin.
+live session and a clip create and retry. They stay as the captured replay for players
+still on 1.19.x. Additive 1.19.3 request envelopes under `tests/Fixtures/wire/1.19.3/`
+cover `viewStart` with `beaconSeq` and both `seeking` sources, and
+`tests/Fixtures/wire/1.22.0-derived/` covers the 1.22.0 additions (reconnect outage,
+reconnecting-marked error, `liveEnded`, full unload `viewEnd`). Both are **derived
+(recapture owed)** from the player source, not captured transports.
 
 ## Clips
 
@@ -1178,7 +1291,7 @@ This table is generated from `Hei\ScarlettPlayer\Player\FeatureMatrix`, the same
 builder enforces (`FeatureMatrix::toMarkdown()`; a test fails if the two differ). A cell
 reading "from player X" is checked against `player.player_version`: below it, asking for that
 feature in embed mode throws `UnsupportedInEmbedMode`, which names the module-mode
-alternative. On the default 1.19.1 (from 1.17.0), embed mode carries clips, chapters and captions; chapters
+alternative. On the default 1.22.0 (from 1.17.0), embed mode carries clips, chapters and captions; chapters
 and clips need the embed's addon files, which the component loads for you.
 
 ### Config builder
@@ -1552,6 +1665,7 @@ falls through to the bound resolver.
 | `v0.2.1` | 1.19.x, pinned at 1.19.1 (`player.player_version`) | `tests/Fixtures/wire/1.19.1/`, captured | Recaptured by the player repo's harness against the `v1.19.1` checkout (21 fixtures, a 26-beacon session sequence, 14 harness assertions passing); the same keys, events and exit types as 1.17.0, and the harness has no video-change scenario, so the 1.19 new-view boundary is not in the set. Embed mode carries chapters, captions and clips (from player 1.17.0), with the `embed.addon.chapters` and `embed.addon.clips` addon files beside the bundle; the browser test runs the npm 1.19.1 embed bundle |
 | `v0.3.0` | Still pinned at 1.19.1; additive ingest support for the 1.19.3 source contract | 1.19.1 captured set retained; `tests/Fixtures/wire/1.19.3/` derived (recapture owed) | Knows `beaconSeq` and `seekSource`; nullable raw `seq` orders timestamp ties. On upgrading the player to 1.19.3, `rebuffer_count` drops sharply, mostly on Safari: `waiting` under the default 250 ms `rebufferGraceMs` no longer counts; `rebufferStart` is sent about 250 ms after the stall began, while `rebuffer_ms` still counts from the first `waiting`. `seek_count` and `seeking` rows rise because progress-bar, keyboard, replay and native-control seeks were not sent before 1.19.3. Both are breaks in continuity across the player upgrade, not ingest bugs. No player repin in this package release |
 | `v0.4.0` | Default pin 1.19.1; prepared for 1.20.0 signals and QoE v1/v2 ingest | `tests/Fixtures/wire/signals-candidate/`, real browser captures from the local signals source, still labeled 1.19.3 by its package metadata | Structured errors, nullable scores, interval metrics, page context and privacy options. Published 1.20.0 artifact verification and recapture remain pending; npm returned 404 during preparation. Batching remains off and unsupported |
+| `v0.5.0` | 1.22.x, pinned at 1.22.0 (`player.player_version`, was 1.19.1) | `tests/Fixtures/wire/1.22.0-derived/`, derived (recapture owed); the captured 1.19.1 set retained | Verified against the published npm 1.22.0 analytics, embed, chapters, share and captions packages and the CDN `v1.22.0/` files (byte-identical to npm); the browser test runs the npm 1.22.0 embed bundle. The player harness could not capture 1.22.0: three of its own assertions still expect the pre-1.22 unload subset. Heartbeat and unload `viewEnd` carry every counter; `elementSeekCount`, `reconnectCount`, `reconnectDuration`, `dvrTime`; `reconnecting` and `recovered` events; error `networkState`, `readyState`, `online`, `sourceHost`, `reconnecting`; `pause_ms` and heartbeat-only `media_duration`; `liveEnded`; null bitrates and live `completionRate`. Needs the additive `scarlett-migrations-reconnects` migration. `scarlett_view_errors.fatal` now follows severity. `seek_count` coalesces element seek bursts from 1.22. Embed attributes, `Chapter`/`CaptionSource` shapes, addon files and the share snippet are unchanged from 1.19.1 |
 
 Player 1.19.3's `rebufferGraceMs: 0` restores immediate rebuffer counting. Its
 `rebufferStart.timestamp` is the send time, not backdated to the first `waiting`;
@@ -1562,20 +1676,22 @@ Two contract rules keep the package and the player from drifting:
 
 - **Additive tolerance.** Unknown top-level beacon keys are stored in `custom`, never
   rejected, so upgrading the player ahead of the package never breaks ingest.
-- **Batching remains unsupported.** Keep player 1.20.0 `batch` disabled. Both an array
+- **Batching remains unsupported.** Keep the player's `batch` option (from 1.20.0) disabled. Both an array
   body and `{ batch: 1, sentAt, events }` receive 422. This release does not emit
   `data-analytics-batch` or enable batching. A batch-capable ingest must be implemented
   and tested before opting in; accepting both shapes is a separately versioned contract.
 
-The 1.19.1 wire fixture set is fully captured. The new 1.19.3 beacon fixtures are derived
-from the working-tree analytics contract and explicitly marked `derived (recapture owed)`;
-they do not claim a released-player capture. The share-built embed iframe fixture is
-also derived: it is generated by the share plugin's own snippet builder, taken byte for
-byte from the published 1.19.1 dist, because the capture harness has no share scenario.
+The 1.19.1 wire fixture set is fully captured and kept as the replay for 1.19.x players.
+The 1.19.3 and `1.22.0-derived` beacon fixtures are derived from the analytics source
+and explicitly marked `derived (recapture owed)`; they do not claim a captured transport
+(the 1.22.0 set was re-verified against the published source). The share-built embed
+iframe fixture is also derived: it is generated by the share plugin's own snippet
+builder, taken byte for byte from the published 1.22.0 dist, because the capture harness
+has no share scenario.
 
 The embed bundle location follows `player.embed_bundle`, a template defaulting to
 `{cdn_url}/v{player_version}/embed.js`: the player CDN serves one directory per release
-(for example, `v1.19.1/`) and no `/latest/` alias yet, so the embed bundle is always the pinned version.
+(for example, `v1.22.0/`) and no `/latest/` alias yet, so the embed bundle is always the pinned version.
 
 ## Development
 

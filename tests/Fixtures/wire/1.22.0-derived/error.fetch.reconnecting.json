@@ -1,0 +1,54 @@
+{
+    "fixture": {
+        "player": "1.22.0",
+        "status": "derived (recapture owed)",
+        "derivedAt": "2026-10-06",
+        "event": "error",
+        "transport": "fetch",
+        "variant": "reconnecting",
+        "scenario": "derived-live-reconnect"
+    },
+    "request": {
+        "method": "POST",
+        "path": "/api/scarlett/beacons",
+        "query": {},
+        "headers": {
+            "content-type": "application/json",
+            "x-api-key": "wire-capture-key"
+        },
+        "body": {
+            "event": "error",
+            "timestamp": 1791300006000,
+            "viewId": "derived-1.22.0-live-reconnect",
+            "sessionId": "derived-1.22.0-session",
+            "viewerId": "derived-1.22.0-viewer",
+            "videoId": "wire-fixture-live",
+            "videoTitle": "Wire fixture (live)",
+            "isLive": true,
+            "playerVersion": "1.22.0",
+            "playerName": "scarlett-player",
+            "browser": "Instagram",
+            "os": "iOS",
+            "deviceType": "mobile",
+            "screenSize": "390x844",
+            "playerSize": "390x219",
+            "connectionType": "4g",
+            "tenant": "wire",
+            "planTier": "free",
+            "errorType": "MEDIA_NETWORK_ERROR",
+            "errorMessage": "Fatal network error: manifestLoadError",
+            "errorCode": "MEDIA_NETWORK_ERROR",
+            "fatal": true,
+            "errorCategory": "network",
+            "errorSeverity": "warning",
+            "httpStatus": 503,
+            "networkState": 2,
+            "readyState": 1,
+            "attempts": 1,
+            "reconnecting": true,
+            "online": true,
+            "sourceHost": "cdn.example.test",
+            "beaconSeq": 3
+        }
+    }
+}

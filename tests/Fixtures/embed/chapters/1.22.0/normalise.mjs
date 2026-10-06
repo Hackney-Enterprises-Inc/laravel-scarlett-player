@@ -1,4 +1,4 @@
-// normaliseChapters(), lifted verbatim from the published @scarlett-player/chapters@1.19.1
+// normaliseChapters(), lifted verbatim from the published @scarlett-player/chapters@1.22.0
 // dist/index.js (see ../PROVENANCE.md). The function is not exported by the package, and
 // it is the code that decides which end a chapter gets, so the builder's output is run
 // through it rather than through a copy of its rules.

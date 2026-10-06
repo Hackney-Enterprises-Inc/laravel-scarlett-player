@@ -1,0 +1,45 @@
+{
+    "fixture": {
+        "player": "1.22.0",
+        "status": "derived (recapture owed)",
+        "derivedAt": "2026-10-06",
+        "event": "reconnecting",
+        "transport": "fetch",
+        "variant": null,
+        "scenario": "derived-live-reconnect"
+    },
+    "request": {
+        "method": "POST",
+        "path": "/api/scarlett/beacons",
+        "query": {},
+        "headers": {
+            "content-type": "application/json",
+            "x-api-key": "wire-capture-key"
+        },
+        "body": {
+            "event": "reconnecting",
+            "timestamp": 1791300006001,
+            "viewId": "derived-1.22.0-live-reconnect",
+            "sessionId": "derived-1.22.0-session",
+            "viewerId": "derived-1.22.0-viewer",
+            "videoId": "wire-fixture-live",
+            "videoTitle": "Wire fixture (live)",
+            "isLive": true,
+            "playerVersion": "1.22.0",
+            "playerName": "scarlett-player",
+            "browser": "Instagram",
+            "os": "iOS",
+            "deviceType": "mobile",
+            "screenSize": "390x844",
+            "playerSize": "390x219",
+            "connectionType": "4g",
+            "tenant": "wire",
+            "planTier": "free",
+            "reconnectCount": 1,
+            "attempt": 1,
+            "delayMs": 1000,
+            "elapsedMs": 0,
+            "beaconSeq": 4
+        }
+    }
+}
