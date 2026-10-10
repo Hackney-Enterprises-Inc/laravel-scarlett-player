@@ -19,19 +19,35 @@ use Symfony\Component\Process\Process;
 
 const SMOKE_ORIGIN = 'http://127.0.0.1:8001';
 
-/** A free 127.0.0.1 port, as host:port. */
-function smokeFreeAddress(): string
+/**
+ * Two distinct free 127.0.0.1 addresses (target, proxy), as host:port. Both
+ * sockets stay bound until both are chosen, so the OS cannot hand the first
+ * port out again for the second.
+ *
+ * @return array{0: string, 1: string}
+ */
+function smokeFreeAddresses(): array
 {
-    $socket = stream_socket_server('tcp://127.0.0.1:0', $errno, $errstr);
+    $sockets = [];
 
-    if ($socket === false) {
-        throw new RuntimeException("No free port for the TLS proxy smoke test: {$errstr}");
+    try {
+        foreach ([0, 1] as $index) {
+            $socket = stream_socket_server('tcp://127.0.0.1:0', $errno, $errstr);
+
+            if ($socket === false) {
+                throw new RuntimeException("No free port for the TLS proxy smoke test: {$errstr}");
+            }
+
+            $sockets[$index] = $socket;
+        }
+
+        return [
+            (string) stream_socket_get_name($sockets[0], false),
+            (string) stream_socket_get_name($sockets[1], false),
+        ];
+    } finally {
+        array_map(fclose(...), $sockets);
     }
-
-    $name = (string) stream_socket_get_name($socket, false);
-    fclose($socket);
-
-    return $name;
 }
 
 /**
@@ -44,8 +60,7 @@ function smokeWithTlsProxy(Closure $callback): void
 {
     $root = dirname(__DIR__, 2);
     $support = __DIR__.'/support';
-    $targetAddress = smokeFreeAddress();
-    $proxyAddress = smokeFreeAddress();
+    [$targetAddress, $proxyAddress] = smokeFreeAddresses();
 
     $cert = new Process(['sh', $support.'/make-cert.sh'], $root);
     $cert->mustRun();
@@ -169,8 +184,7 @@ it('returns a 204 the target misframes as chunked as that 204, never a 502', fun
 
     (new Process(['sh', $support.'/make-cert.sh'], $root))->mustRun();
 
-    $targetAddress = smokeFreeAddress();
-    $proxyAddress = smokeFreeAddress();
+    [$targetAddress, $proxyAddress] = smokeFreeAddresses();
     $target = new Process(['node', $support.'/misframed-target.mjs', substr($targetAddress, strrpos($targetAddress, ':') + 1)], $root);
     $proxy = new Process(['node', $support.'/tls-proxy.mjs'], $root, [
         'SCARLETT_PROXY_LISTEN' => $proxyAddress,
