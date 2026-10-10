@@ -708,9 +708,14 @@ The backfill command fills the canonical columns for historical rows, preserving
 legacy ones, in bounded keyset batches. It is a **dry run unless `--apply`** is
 passed. For each measurement it seeks that gauge's own retained raw evidence (the
 post-pipeline payload matching the legacy stamp and value) and decides the scale only
-from the evidence's marker and producer identity: proven percent and proven ratio are
-normalized, tied conflicting evidence stays ambiguous, and missing raw retention
-leaves the value unavailable. Ambiguous or missing-evidence measurements with a
+from the evidence's marker and producer identity, the inputs ingest reads: proven
+percent and proven ratio are normalized, tied conflicting evidence stays ambiguous,
+and missing raw retention leaves the value unavailable. The raw log keeps an explicit
+`gaugeScale: null` (from 0.6.0 on), so it stays an invalid marker as at ingest; raw
+logs written by earlier versions dropped it, and Scarlett 1.22.0 never sends one. The
+raw log also lays the server context over the browser's keys, while ingest reads the
+marker and producer only from the browser's, so on a view whose server context set
+`gaugeScale`, `playerName` or `playerVersion` the evidence is ambiguous. Ambiguous or missing-evidence measurements with a
 trustworthy legacy stamp get a canonical null plus that stamp once, so a rerun resumes
 without dividing twice; rows whose legacy stamp is missing are reported and left
 untouched. Writes are compare-and-swap against the observed legacy value/stamp and the

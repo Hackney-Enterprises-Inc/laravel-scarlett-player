@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Hei\ScarlettPlayer\Data\BeaconPayload;
 use Hei\ScarlettPlayer\Jobs\ProcessBeacon;
 use Hei\ScarlettPlayer\Stores\EloquentBeaconStore;
 use Hei\ScarlettPlayer\Tests\Fixtures\Beacons\Beacons;
@@ -276,6 +277,72 @@ it('lets a beacon newer than a pre-upgrade gauge write the canonical column stra
     $row = DB::table('scarlett_views')->where('view_id', Beacons::VIEW)->sole();
     expect((float) $row->completion_ratio)->toBe(0.8)
         ->and(backfillStamp($row, 'completion_ratio_at'))->toBe(EloquentBeaconStore::clientTime(Beacons::T0 + 20));
+});
+
+/**
+ * Ingest beacons on a schema without the gauge columns, as before the
+ * upgrade, then add the columns: the backfill's input.
+ *
+ * @param  list<BeaconPayload>  $payloads
+ */
+function ingestBeforeGaugeColumns(array $payloads): void
+{
+    config()->set('scarlett-player.beacons.store_raw_events', true);
+    $migration = require __DIR__.'/../../../database/migrations/0001_01_01_000007_add_gauges_to_scarlett_tables.php';
+    $migration->down();
+
+    try {
+        foreach ($payloads as $payload) {
+            app()->call([new ProcessBeacon($payload), 'handle']);
+        }
+    } finally {
+        $migration->up();
+    }
+}
+
+it('backfills an explicit null marker as invalid, as ingest stores it', function (): void {
+    ingestBeforeGaugeColumns([Beacons::payload('viewEnd', 10, [
+        'exitType' => 'abandoned', 'completionRate' => 50, 'gaugeScale' => null,
+        'playerName' => 'scarlett-player', 'playerVersion' => '1.22.0',
+    ])]);
+
+    $this->artisan('scarlett:views:backfill-gauges', ['--apply' => true])
+        ->expectsOutputToContain('invalid marker')
+        ->assertSuccessful();
+
+    $row = DB::table('scarlett_views')->where('view_id', Beacons::VIEW)->sole();
+    expect((float) $row->completion_rate)->toBe(50.0)
+        ->and($row->completion_ratio)->toBeNull()
+        ->and(backfillStamp($row, 'completion_ratio_at'))->toBe(EloquentBeaconStore::clientTime(Beacons::T0 + 10));
+});
+
+it('treats evidence whose scale keys the server context set as ambiguous', function (array $browser, array $server): void {
+    // The raw log overlays the server's keys, which would prove a scale the
+    // browser's own keys (what ingest reads) never established.
+    ingestBeforeGaugeColumns([Beacons::payload('viewEnd', 10, [
+        'exitType' => 'abandoned', 'completionRate' => 0.5, ...$browser,
+    ])->withServer($server)]);
+
+    $this->artisan('scarlett:views:backfill-gauges', ['--apply' => true])->assertSuccessful();
+
+    $row = DB::table('scarlett_views')->where('view_id', Beacons::VIEW)->sole();
+    expect($row->completion_ratio)->toBeNull()
+        ->and(backfillStamp($row, 'completion_ratio_at'))->toBe(EloquentBeaconStore::clientTime(Beacons::T0 + 10));
+})->with([
+    'marker' => [['playerName' => 'scarlett-player', 'playerVersion' => '1.22.0'], ['gaugeScale' => 'ratio']],
+    'producer' => [['playerName' => 'other-player', 'playerVersion' => '1.22.0'], ['playerName' => 'scarlett-player']],
+    'version' => [['playerName' => 'scarlett-player', 'playerVersion' => '1.21.0'], ['playerVersion' => '1.22.0']],
+]);
+
+it('still proves the scale when the server context sets only unrelated keys', function (): void {
+    ingestBeforeGaugeColumns([Beacons::payload('viewEnd', 10, [
+        'exitType' => 'abandoned', 'completionRate' => 37.5,
+        'playerName' => 'scarlett-player', 'playerVersion' => '1.22.0',
+    ])->withServer(['tenant' => 7, 'gaugeScale' => null])]);
+
+    $this->artisan('scarlett:views:backfill-gauges', ['--apply' => true])->assertSuccessful();
+
+    expect((float) DB::table('scarlett_views')->where('view_id', Beacons::VIEW)->sole()->completion_ratio)->toBe(0.375);
 });
 
 it('walks every row in bounded keyset batches', function (): void {

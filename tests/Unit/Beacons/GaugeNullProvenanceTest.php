@@ -75,6 +75,24 @@ it('keeps the explicit null out of the stored and raw-log arrays', function (): 
         ->and($payload->browserArray())->not->toHaveKey('completionRate');
 });
 
+it('keeps an explicit null marker in the stored arrays, unless a custom marker or the server context replaces it', function (): void {
+    $body = Beacons::body('viewEnd', 0, ['completionRate' => 50, 'gaugeScale' => null, 'exitType' => 'abandoned']);
+    $payload = BeaconPayload::fromArray($body);
+
+    expect($payload->toArray())->toHaveKey('gaugeScale')
+        ->and($payload->toArray()['gaugeScale'])->toBeNull()
+        ->and($payload->explicitlyNullGauge('gaugeScale'))->toBeTrue()
+        // The hash basis still omits it.
+        ->and($payload->bodyHash)->toBe(BeaconPayload::fromArray(array_diff_key($body, ['gaugeScale' => true]))->bodyHash);
+
+    expect($payload->withCustom(['gaugeScale' => 'percent'])->toArray()['gaugeScale'])->toBe('percent');
+
+    $owned = $payload->withServer(['gaugeScale' => null]);
+    expect($owned->toArray())->not->toHaveKey('gaugeScale')
+        ->and($owned->explicitlyNullGauge('gaugeScale'))->toBeFalse();
+    expect($payload->withServer(['gaugeScale' => 'ratio'])->browserArray())->not->toHaveKey('gaugeScale');
+});
+
 it('carries the provenance through every with*() transformation', function (): void {
     $payload = BeaconPayload::fromArray(Beacons::body('viewEnd', 0, [
         'completionRate' => null,

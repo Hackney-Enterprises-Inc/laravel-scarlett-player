@@ -20,7 +20,12 @@ use stdClass;
  * A historical gauge's scale is never guessed from its magnitude. For each
  * measurement the command seeks the view's retained post-pipeline raw evidence
  * matching the gauge's own latest timestamp and value; the evidence's own
- * marker and producer identity decide the scale through GaugeNormalizer. Tied
+ * marker and producer identity decide the scale through GaugeNormalizer, the
+ * same inputs ingest reads. The raw log keeps an explicit null marker, so it
+ * stays invalid here as at ingest. It also overlays the server context on the
+ * browser's keys, while ingest reads the marker and producer only from the
+ * browser: when the view's server map holds any of those keys, the evidence
+ * cannot show what ingest would have seen, and the measurement is ambiguous. Tied
  * conflicting evidence is ambiguous. Missing raw retention leaves the value
  * unavailable. Ambiguous or missing-evidence measurements with a trustworthy
  * legacy stamp get a canonical null plus that stamp once, marking the
@@ -51,6 +56,9 @@ class BackfillGaugesCommand extends Command
             'wire' => 'rebufferRatio',
         ],
     ];
+
+    /** The raw evidence keys that decide a scale; a server-owned one is not the browser's. */
+    private const SCALE_KEYS = ['gaugeScale', 'playerName', 'playerVersion'];
 
     private const CANONICAL_COLUMNS = [
         'completion_ratio', 'completion_ratio_at', 'rebuffer_fraction', 'rebuffer_fraction_at',
@@ -200,6 +208,10 @@ class BackfillGaugesCommand extends Command
             return [null, 'missing raw evidence'];
         }
 
+        if ($this->serverOwnsScaleKey($row)) {
+            return [null, 'ambiguous'];
+        }
+
         $readings = [];
 
         foreach ($matching as $payload) {
@@ -234,6 +246,19 @@ class BackfillGaugesCommand extends Command
         }
 
         return [$values[0], str_contains($available[0]->reason, 'percent') ? 'proven percent' : 'proven ratio'];
+    }
+
+    /**
+     * Whether the view's server context set a key the scale is decided from.
+     * The raw log replaces the browser's value with it, so the evidence no
+     * longer shows the browser's. Tables without the server column never had
+     * a server context.
+     */
+    private function serverOwnsScaleKey(stdClass $row): bool
+    {
+        $server = property_exists($row, 'server') && is_string($row->server) ? json_decode($row->server, true) : null;
+
+        return is_array($server) && array_intersect(self::SCALE_KEYS, array_keys($server)) !== [];
     }
 
     /**

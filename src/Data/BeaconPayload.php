@@ -24,7 +24,9 @@ use Hei\ScarlettPlayer\Exceptions\InvalidBeaconContextException;
  * distinguished from an omitted gauge. So does their `gaugeScale` marker: a
  * null marker is a present, invalid one, never an absent marker that would
  * fall back to the producer registry. The provenance is narrow: get(), has(),
- * the raw classification, the hash basis and the stored arrays are unchanged.
+ * the raw classification and the hash basis are unchanged, and the stored
+ * arrays add only that null marker, so the gauges backfill reads the same
+ * marker from the raw log as ingest did.
  *
  * $server is what the host asserted about the beacon (beacons.context, or a pipeline
  * step through withServer()), never what the browser sent. A key in $server is never
@@ -59,8 +61,9 @@ final readonly class BeaconPayload
      * Uninitialized when the beacon carried none and on every payload restored
      * from a queue written before this provenance existed: both mean "no
      * explicit-null claim", so an older job never gains one. Carried unchanged
-     * through the with*() methods. Never serialized into the hash basis or the
-     * stored arrays; only read by explicitlyNullGauge().
+     * through the with*() methods. Never part of the hash basis; the stored
+     * arrays show only a null marker (nullGaugeScale()). Read through
+     * explicitlyNullGauge().
      *
      * @var list<string>
      */
@@ -261,7 +264,8 @@ final readonly class BeaconPayload
         public array $owned = [],
         ?string $bodyHash = null,
     ) {
-        $this->bodyHash = $bodyHash ?? sha1((string) json_encode($this->browserArray(), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+        // No null marker yet: the provenance is attached after construction.
+        $this->bodyHash = $bodyHash ?? sha1((string) json_encode($this->browserKeys([]), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
     }
 
     /**
@@ -373,11 +377,14 @@ final readonly class BeaconPayload
      * completionRate), as opposed to omitting it. False
      * for every payload parsed by an older package version or restored from a
      * queue written before this provenance existed: a null was dropped there,
-     * and no presence claim is invented afterwards.
+     * and no presence claim is invented afterwards. The marker is a custom
+     * dimension, so a server context that owns `gaugeScale` strips its null
+     * as it strips a browser value.
      */
     public function explicitlyNullGauge(string $key): bool
     {
-        return isset($this->gaugeNulls) && in_array($key, $this->gaugeNulls, true);
+        return isset($this->gaugeNulls) && in_array($key, $this->gaugeNulls, true)
+            && ($key !== 'gaugeScale' || ! in_array($key, $this->owned, true));
     }
 
     /**
@@ -506,7 +513,8 @@ final readonly class BeaconPayload
      * The beacon as stored: the browser's keys, then the server context last, so a
      * server-owned value wins a name the browser also used. What the raw event log
      * and the fake's ledger record, after any pipeline step, so a redaction reaches
-     * the raw log too. Explicit null qoeScore/qoeVersion are retained; other null keys are left out.
+     * the raw log too. Explicit null qoeScore/qoeVersion and an explicit null
+     * `gaugeScale` marker are retained; other null keys are left out.
      *
      * @return array<string, mixed>
      */
@@ -524,6 +532,18 @@ final readonly class BeaconPayload
      */
     public function browserArray(): array
     {
+        return $this->browserKeys($this->nullGaugeScale());
+    }
+
+    /**
+     * browserArray() with the given null marker between the known keys and the
+     * custom dimensions, so a custom marker replaces it.
+     *
+     * @param  array<string, null>  $nullMarker
+     * @return array<string, mixed>
+     */
+    private function browserKeys(array $nullMarker): array
+    {
         // array_replace, not `...`: spreading renumbers integer keys, so a custom
         // dimension named "5" (PHP makes numeric-string keys ints) would become 0.
         return array_replace([
@@ -533,7 +553,19 @@ final readonly class BeaconPayload
             'sessionId' => $this->sessionId,
             'viewerId' => $this->viewerId,
             'videoId' => $this->videoId,
-        ], $this->context, $this->fields, $this->custom);
+        ], $this->context, $this->fields, $nullMarker, $this->custom);
+    }
+
+    /**
+     * An explicit null marker, kept so the raw log tells it from an omitted
+     * one: the gauges backfill reads the marker from there. A marker in the
+     * custom dimensions (a pipeline may set one) replaces it.
+     *
+     * @return array<string, null>
+     */
+    private function nullGaugeScale(): array
+    {
+        return $this->explicitlyNullGauge('gaugeScale') ? ['gaugeScale' => null] : [];
     }
 
     /**
