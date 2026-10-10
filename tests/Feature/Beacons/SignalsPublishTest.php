@@ -10,7 +10,7 @@ use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\ServiceProvider;
 
-it('publishes only the signals upgrade after Laravel timestamped the four original migrations', function (): void {
+it('publishes only the signals upgrade, dated after the four timestamped original migrations', function (): void {
     $root = sys_get_temp_dir().'/scarlett-signals-publish-'.bin2hex(random_bytes(8));
     $oldDatabasePath = app()->databasePath();
     $source = $root.'/legacy';
@@ -44,15 +44,20 @@ it('publishes only the signals upgrade after Laravel timestamped the four origin
         DB::table('scarlett_views')->insert(['view_id' => 'old', 'session_id' => 's', 'viewer_id' => 'v', 'video_id' => 'm', 'qoe_score' => 65]);
         Date::setTestNow('2026-09-30 12:00:00');
         $this->artisan('vendor:publish', ['--tag' => 'scarlett-migrations-signals'])->assertSuccessful();
-        expect(glob($destination.'/*.php'))->toHaveCount(5);
+        expect(glob($destination.'/*.php'))->toHaveCount(5)
+            ->and(file_exists($destination.'/2026_09_30_120001_add_signals_to_scarlett_tables.php'))->toBeTrue();
         $this->artisan('migrate', $options)->assertSuccessful();
         expect(Schema::hasColumn('scarlett_views', 'qoe_version'))->toBeTrue()
             ->and((int) DB::table('scarlett_views')->where('view_id', 'old')->value('qoe_version'))->toBe(1);
+        // A repeat publish adds a second dated copy, which migrates as a no-op.
+        DB::table('scarlett_views')->insert(['view_id' => 'new', 'session_id' => 's', 'viewer_id' => 'v', 'video_id' => 'm', 'qoe_score' => 70]);
         Date::setTestNow('2026-10-01 12:00:00');
         $this->artisan('vendor:publish', ['--tag' => 'scarlett-migrations-signals'])->assertSuccessful();
         $this->artisan('migrate', $options)->assertSuccessful();
-        expect(glob($destination.'/*.php'))->toHaveCount(5)
-            ->and(DB::table('migrations')->count())->toBe(5);
+        expect(glob($destination.'/*.php'))->toHaveCount(6)
+            ->and(file_exists($destination.'/2026_10_01_120001_add_signals_to_scarlett_tables.php'))->toBeTrue()
+            ->and(DB::table('migrations')->count())->toBe(6)
+            ->and(DB::table('scarlett_views')->where('view_id', 'new')->value('qoe_version'))->toBeNull();
     } finally {
         Artisan::call('migrate:reset', $options);
         Date::setTestNow();

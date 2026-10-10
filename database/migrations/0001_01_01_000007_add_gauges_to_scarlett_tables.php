@@ -8,60 +8,44 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
 /*
- * Player 1.22.0 additions. View counters are the player's running totals, merged
- * monotonic like the other counters: element_seek_count (raw element seeks; seek_count
- * coalesces their bursts), reconnect_count (outages, not attempts), reconnect_ms (time
- * in those outages, overlapping rebuffer_ms after the first frame), dvr_ms (live
- * play time behind the edge, null on VOD) and pause_ms (time paused, an open pause
- * included). media_duration is the media's length in seconds, latest by timestamp
- * under media_duration_at, from heartbeats only (recovered and rebufferEnd reuse
- * `duration` for milliseconds) and only when finite, above zero and not on a beacon
- * saying live. Meaningful only where is_live is not true: hls.js reports a live
- * sliding window, though only after the player has classified the view live. Error
- * rows gain the beacon's context.
+ * Canonical gauge columns. The legacy completion_rate and rebuffer_ratio keep
+ * the received wire values (percent for Scarlett 1.x); ingest additionally
+ * normalizes each gauge into a canonical 0..1 ratio with the timestamp of the
+ * measurement that wrote it. completion_ratio / completion_ratio_at come from
+ * completionRate, rebuffer_fraction / rebuffer_fraction_at from rebufferRatio,
+ * each gauge stamped independently. A canonical null with a stamp is a
+ * processed unavailable measurement (a live view, an unknown scale), which a
+ * backfill resumes from instead of refilling with an old value.
  *
- * Existing rows are not rewritten: before 1.22.0 the player sent 0 for an unknown
- * bitrate, so historical avg_bitrate and max_bitrate zeroes stay as they are.
+ * Existing rows are not rewritten: historical scales are never guessed by
+ * magnitude, so rows keep whatever the legacy columns hold until the dry-run
+ * backfill command (scarlett:views:backfill-gauges) proves a scale from each
+ * measurement's own retained evidence.
  *
- * Idempotent: a column that already exists is left alone, so a second published copy,
- * a host that added the columns itself, or a host that already ran the 0.5 copy named
- * 0001_01_01_000006_... migrates as a no-op. On a schema without the columns it adds
- * exactly what 0.5.0 added, in the same order.
+ * Idempotent: a column that already exists is left alone, so a second published
+ * copy, a host that added the columns itself, or a host that already ran a copy
+ * named 0001_01_01_000007_... migrates as a no-op.
  */
 return new class extends Migration
 {
     private const VIEW_COLUMNS = [
-        'element_seek_count' => ['unsignedInteger'],
-        'reconnect_count' => ['unsignedInteger'],
-        'reconnect_ms' => ['unsignedBigInteger'],
-        'dvr_ms' => ['unsignedBigInteger'],
-        'pause_ms' => ['unsignedBigInteger'],
-        'media_duration' => ['double'],
-        'media_duration_at' => ['dateTime', 3],
-    ];
-
-    private const ERROR_COLUMNS = [
-        'network_state' => ['unsignedInteger'],
-        'ready_state' => ['unsignedInteger'],
-        'online' => ['boolean'],
-        'source_host' => ['string'],
-        'reconnecting' => ['boolean'],
+        'completion_ratio' => ['double'],
+        'completion_ratio_at' => ['dateTime', 3],
+        'rebuffer_fraction' => ['double'],
+        'rebuffer_fraction_at' => ['dateTime', 3],
     ];
 
     /** Every copy of this upgrade, dated or not, ends with this name. */
-    private const NAME = '_add_reconnects_to_scarlett_tables';
+    private const NAME = '_add_gauges_to_scarlett_tables';
 
     public function up(): void
     {
         // Fail before changing anything if this copy sorts before a create migration.
-        foreach (['scarlett_views', 'scarlett_view_errors'] as $table) {
-            if (! Schema::hasTable($table)) {
-                throw UpgradeMigrationOrderException::tableMissing(basename(__FILE__), $table, '0.5.0');
-            }
+        if (! Schema::hasTable('scarlett_views')) {
+            throw UpgradeMigrationOrderException::tableMissing(basename(__FILE__), 'scarlett_views', '0.6.0');
         }
 
         $this->addMissing('scarlett_views', self::VIEW_COLUMNS);
-        $this->addMissing('scarlett_view_errors', self::ERROR_COLUMNS);
     }
 
     public function down(): void
@@ -71,7 +55,6 @@ return new class extends Migration
             return;
         }
 
-        $this->dropPresent('scarlett_view_errors', array_keys(self::ERROR_COLUMNS));
         $this->dropPresent('scarlett_views', array_keys(self::VIEW_COLUMNS));
     }
 

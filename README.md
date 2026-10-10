@@ -119,8 +119,70 @@ migration below. See
 | `scarlett-migrations` | All package migrations, for fresh installations only |
 | `scarlett-migrations-signals` | Only the additive signals migration, for upgrades from 0.3 |
 | `scarlett-migrations-reconnects` | Only the additive player 1.22 migration (reconnects, element seeks, DVR time, error context), for upgrades from 0.4 |
+| `scarlett-migrations-gauges` | Only the additive canonical gauges migration (`completion_ratio`, `rebuffer_fraction` with stamps), for upgrades from 0.5 |
 | `scarlett-views` | The embed page and Blade component views, to `resources/views/vendor/scarlett` |
 | `scarlett-js` | The JS initialiser, to `resources/js/vendor/scarlett-player/init.js` |
+
+### Upgrade migrations
+
+A fresh installation publishes **only** `scarlett-migrations`: from 0.4.0 that folder
+contains the signals upgrade, from 0.5.0 the player 1.22 upgrade and from 0.6.0 the
+canonical gauges upgrade, in order. The upgrade tags are for hosts that installed
+before that upgrade existed. Each publishes
+one migration, dated at publish time, so it sorts after create migrations published
+earlier and a fresh `migrate` (a new environment, a test database) creates the tables
+before altering them. Dating does not guarantee that order on its own: Laravel restarts
+its clock for every `vendor:publish`, so an upgrade tag published in the same second as
+the full folder gets the same timestamp and sorts first. An upgrade that runs before its
+tables exist stops with `UpgradeMigrationOrderException`, naming the file, before it
+changes anything: delete that copy if the full folder already contains the upgrade, or
+rename it to sort after the `create_scarlett_*` migrations. Dating needs
+`database.migrations.update_date_on_publish` on, which is the Laravel 11+ default. An
+application whose `config/database.php` still says `'migrations' => 'migrations'` (the
+older string form) has it off and gets the file under its `0001_01_01_...` name: set
+`'migrations' => ['table' => 'migrations', 'update_date_on_publish' => true]` before
+publishing, or write your own dated migration (below).
+
+Both upgrade migrations are idempotent from 0.6.0. A column that already exists is left
+alone, so publishing a tag twice (each publish adds another dated copy), a database that
+already ran an earlier copy, or a host that added the columns itself all migrate as a
+no-op. The signals migration adds `qoe_version` first, on its own, and marks existing
+scores as QoE v1 straight after, so the backfill runs in the run that adds the column.
+MySQL schema changes are not transactional; if a run stops partway, migrate again: a
+rerun that finds `qoe_version` as the only signals column cannot tell whether the
+backfill finished, so it marks scored rows still without a version as v1 again. Rows that
+already carry a version are never changed. Rolling a copy back drops its columns only when no other copy of the
+same upgrade (a migration whose name ends `_add_signals_to_scarlett_tables`,
+`_add_reconnects_to_scarlett_tables` or `_add_gauges_to_scarlett_tables`) is still recorded as run.
+
+**Published with 0.4.x or 0.5.0?** Those tags wrote the fixed names
+`0001_01_01_000005_add_signals_to_scarlett_tables.php` and
+`0001_01_01_000006_add_reconnects_to_scarlett_tables.php`. Next to dated create
+migrations they sort first: the database that ran them is correct, but a fresh
+`migrate` fails with "no such table". The `beacon upgrade migration order` doctor
+check warns about it, and about any copy (fixed or dated, in `database/migrations` or
+any registered migration path) that sorts before the create migrations it needs. To repair, delete the fixed-name file and publish its tag again
+(the publish skips while that file exists), then migrate; the dated copy runs as a
+no-op on the existing database and in order on a new one:
+
+```bash
+rm database/migrations/0001_01_01_000005_add_signals_to_scarlett_tables.php
+rm database/migrations/0001_01_01_000006_add_reconnects_to_scarlett_tables.php
+php artisan vendor:publish --tag=scarlett-migrations-signals
+php artisan vendor:publish --tag=scarlett-migrations-reconnects
+php artisan migrate
+```
+
+Remove only the files you have. The old rows stay in the `migrations` table; they are
+harmless, and they keep a rollback of the dated copies from dropping the columns. If
+your create migrations kept their `0001_01_01_...` names too, nothing sorts out of
+order and there is nothing to repair.
+
+**Owning the schema instead.** A host that writes its own dated migrations can copy the
+column lists from the upgrade sections below (every column nullable; `*_at` columns are
+`dateTime` with precision 3) and skip the tags. Name the file with the package's suffix
+(`..._add_signals_to_scarlett_tables.php`, `..._add_reconnects_to_scarlett_tables.php`)
+if a published copy may also run, so a rollback of that copy keeps your columns.
 
 ### Routes
 
@@ -365,6 +427,7 @@ merged per field, never per event:
 | True wins | `is_live` | any beacon with `isLive: true` sets it and nothing clears it; `false` only fills an empty column. A live `viewStart` fires before the player has read the playlist and says `false` (from player 1.18 it sends `null`, treated as absent), and a live stream that becomes a replay in the same session stays live |
 | Monotonic | `watch_ms`, `play_ms`, `rebuffer_ms`, `rebuffer_count`, `seek_count`, `pause_count`, `quality_changes`, `error_count`, `max_bitrate`, `startup_ms`, `warning_count`, `element_seek_count`, `reconnect_count`, `reconnect_ms`, `dvr_ms`, `pause_ms` | the larger value wins, whatever the order |
 | Latest by timestamp | `qoe_score`, `avg_bitrate`, `rebuffer_ratio`, `completion_rate`, `current_position`, `media_duration`, the live latency summary | written when the beacon is at least as new as the one that wrote that column (a `*_at` stamp per column); `metrics_at` is the newest |
+| Canonical gauges | `completion_ratio`, `rebuffer_fraction` (0.6.0) | the normalized 0..1 measurement of `completionRate` / `rebufferRatio`, each with its own stamp: written when the stamp is absent or the beacon is at least as new as the stamp, even when the stored value is null (a processed unavailable measurement is never refilled by an older numeric). Once `is_live` is true, `completion_ratio` stays null whatever arrives |
 | Fill if absent | every column | a key absent from the beacon, or null, never touches its column: a null `avgBitrate` leaves the last known one |
 
 Two `viewEnd` beacons for one view (the player can send both) merge. Before player 1.22
@@ -395,12 +458,14 @@ Package 0.5.0 pins **1.22.0**, which carries the signals contract.
 
 For an existing 0.3 installation that has not run the signals migration, publish
 **only** the additive migration with the dedicated tag below. It adds columns to
-views and errors and marks existing non-null scores as QoE v1. The dedicated tag
-keeps a stable filename, so repeating this upgrade command does not publish a
-second copy. Fresh installations use `scarlett-migrations` once for all migrations.
-Do not republish that full folder on an existing host: Laravel's default timestamp
-rewriting can duplicate previously run create migrations, even without `--force`.
-The separate host-owned raw `seq` upgrade below is still needed before 0.3.
+views and errors and marks existing non-null scores as QoE v1. The copy is dated at
+publish time and is a no-op where the columns exist (see
+[Upgrade migrations](#upgrade-migrations), which also covers a fixed-name
+`0001_01_01_000005_...` copy published by 0.4.x or 0.5.0). Fresh installations use
+`scarlett-migrations` once for all migrations. Do not republish that full folder on
+an existing host: Laravel's default timestamp rewriting can duplicate previously run
+create migrations, even without `--force`. The separate host-owned raw `seq` upgrade
+below is still needed before 0.3.
 
 ```bash
 php artisan vendor:publish --tag=scarlett-migrations-signals
@@ -408,6 +473,18 @@ php artisan migrate
 php artisan queue:restart
 php artisan scarlett:doctor
 ```
+
+The migration adds, all nullable: on `scarlett_views`, `qoe_version` and
+`warning_count` (unsigned integer), `fatal_error_category` (string), `anonymous`
+(boolean), `page_url` and `referrer_origin` (text), `page_load_to_init_ms` and
+`player_init_ms` (double), and for each of `segment_count`, `segment_bytes`,
+`segment_load_avg_ms`, `segment_load_max_ms`, `segment_errors`,
+`segment_throughput_bps`, `decoded_frames` and `dropped_frames` a double plus a
+`<name>_at` `dateTime` with precision 3; on `scarlett_view_errors`, `category` and
+`severity` (string), `http_status`, `media_error_code` and `attempts` (unsigned
+integer), `retries_exhausted`, `reconnect_exhausted` and `timed_out` (boolean). A
+host-owned migration also runs the backfill once, when it adds `qoe_version`:
+`update scarlett_views set qoe_version = 1 where qoe_score is not null`.
 
 The `beacon signals columns` doctor check warns about missing columns. Ingest
 continues against older or partially upgraded schemas, skipping unavailable signal
@@ -484,9 +561,10 @@ workers, deploy the ingest, then move the player:
   privacy on unless you configure it.
 
 For an existing installation (signals migration already run), publish **only** the
-additive 1.22 migration. Like the signals tag, it keeps a stable filename, so
-repeating the command does not publish a second copy. Fresh installations use
-`scarlett-migrations` once.
+additive 1.22 migration. Like the signals tag, the copy is dated at publish time and
+is a no-op where the columns exist (see [Upgrade migrations](#upgrade-migrations),
+which also covers a fixed-name `0001_01_01_000006_...` copy published by 0.5.0).
+Fresh installations use `scarlett-migrations` once.
 
 ```bash
 php artisan vendor:publish --tag=scarlett-migrations-reconnects
@@ -497,8 +575,13 @@ php artisan scarlett:doctor
 
 Until the migration runs, ingest continues and skips the new columns (the optional
 raw log keeps the values); the `beacon reconnect columns` doctor check warns. The
-migration also adds `pause_ms` and `media_duration` (with `media_duration_at`). Column
-availability is cached per store instance, so restart workers after migrating.
+migration adds, all nullable: on `scarlett_views`, `element_seek_count` and
+`reconnect_count` (unsigned integer), `reconnect_ms`, `dvr_ms` and `pause_ms`
+(unsigned big integer), `media_duration` (double) and `media_duration_at` (`dateTime`,
+precision 3); on `scarlett_view_errors`, `network_state` and `ready_state` (unsigned
+integer), `online` (boolean), `source_host` (string) and `reconnecting` (boolean). It
+rewrites no existing rows. Column availability is cached per store instance, so
+restart workers after migrating.
 
 | Field | Persistence and merge |
 |---|---|
@@ -541,7 +624,12 @@ What changes for queries and listeners:
 - **Unload `viewEnd`.** It now carries the same fields as the ended `viewEnd`
   (counters, `rebufferRatio`, `qoeScore`, `qoeVersion`, `completionRate`).
 - **Percent watched.** `completion_rate` is the player's own figure on the final
-  `viewEnd`. For a figure from the view row at any point, divide position or play
+  `viewEnd`: on 1.22.0, the audited version, a percentage, null on live and otherwise
+  unbounded (an unknown duration falls back to the last known duration and position, or sends 0,
+  and a position past the duration exceeds 100); other versions are unaudited. For unit-safe queries use the canonical
+  `completion_ratio` (0..1) instead (see
+  [Canonical gauges](#canonical-gauges-and-upgrading-from-05)); the legacy column
+  keeps the received wire value. For a figure from the view row at any point, divide position or play
   time by `media_duration`: `current_position / media_duration * 100` (where the
   viewer is) or `play_ms / 1000 / media_duration * 100` (how much was played, which
   exceeds 100 on rewatching). Both are NULL when no heartbeat reported a usable
@@ -563,6 +651,84 @@ What changes for queries and listeners:
   `$payload->knownValue('reconnectCount')` to get the same value from such a job as
   from a fresh one, and decide whether an error ended its view with
   `$payload->isFatalError()`.
+
+#### Canonical gauges and upgrading from 0.5
+
+The viewEnd gauges `completionRate` and `rebufferRatio` reached the legacy columns
+`completion_rate` and `rebuffer_ratio` exactly as sent. Scarlett 1.22.0, the audited
+version, sends **percentages**: completion is null on live, otherwise unbounded (an
+unknown duration falls back to the last known duration and position, or sends 0; a
+position past the duration exceeds 100), and rebuffer exceeds 100 when rebuffering outlasts watch time (0
+with no watch time). Older versions are not audited and must not be assumed to match.
+Stored alongside values of unknown provenance, an average over either column is
+meaningless: 0.5 can be 0.5% or 50%, and a value's magnitude never proves its units.
+0.6.0 therefore adds canonical **ratio** columns and never changes the legacy ones:
+
+| Column | Meaning |
+|---|---|
+| `completion_ratio`, `completion_ratio_at` | The completion as a 0..1 ratio, and the timestamp of the measurement that wrote it |
+| `rebuffer_fraction`, `rebuffer_fraction_at` | The rebuffer share of watch time as a 0..1 fraction, stamped the same way |
+
+Each gauge is normalized after the host pipeline, from the beacon's own units:
+
+- A beacon may declare its units with `gaugeScale` (`percent` or `ratio`), kept as a
+  custom dimension. A recognized marker wins; a present but unrecognized marker,
+  including `gaugeScale: null`, is never second-guessed from the value or the registry.
+- Without a marker, only the source-audited producer registry decides. Initially
+  `scarlett-player` **1.22.0** is proven percent from an audit of its analytics source
+  (it sends no marker); other producers and versions stay unknown until audited. The
+  analytics gauge-contract release is planned to send `gaugeScale: 'percent'` itself,
+  with finite percentages bounded to 0..100 and null for unavailable measurements;
+  1.22.0 does neither, so its out-of-range values clamp here and its unknown-duration
+  0 is stored as 0.
+  The view row's set-once `player_version` is not evidence for a later beacon.
+- Unknown or ambiguous units write **null with the measurement's stamp**: a processed
+  unavailable measurement, never a fabricated zero and never a stale average. An older
+  beacon cannot refill it. Live rows keep `completion_ratio` null regardless of
+  arrival order; `rebuffer_fraction` is unaffected by the live rule.
+- Finite inputs clamp to 0..1 with the out-of-range condition recorded; percent
+  divides by 100 even below one. Legacy columns keep the received values unchanged,
+  and omitting a gauge still leaves both columns alone.
+
+Until the migration runs, ingest continues and skips the canonical columns (the raw
+log keeps everything); the `beacon gauge columns` doctor check warns. Upgrade order:
+publish, migrate, restart workers, review the dry-run backfill, then point readers at
+the new columns:
+
+```bash
+php artisan vendor:publish --tag=scarlett-migrations-gauges
+php artisan migrate
+php artisan queue:restart
+php artisan scarlett:doctor
+php artisan scarlett:views:backfill-gauges          # dry run, writes nothing
+php artisan scarlett:views:backfill-gauges --apply  # after reviewing the report
+```
+
+The backfill command fills the canonical columns for historical rows, preserving the
+legacy ones, in bounded keyset batches. It is a **dry run unless `--apply`** is
+passed. For each measurement it seeks that gauge's own retained raw evidence (the
+post-pipeline payload matching the legacy stamp and value) and decides the scale only
+from the evidence's marker and producer identity: proven percent and proven ratio are
+normalized, tied conflicting evidence stays ambiguous, and missing raw retention
+leaves the value unavailable. Ambiguous or missing-evidence measurements with a
+trustworthy legacy stamp get a canonical null plus that stamp once, so a rerun resumes
+without dividing twice; rows whose legacy stamp is missing are reported and left
+untouched. Writes are compare-and-swap against the observed legacy value/stamp and the
+canonical stamp, so live ingest wins a race and a canonical stamp (from ingest or an
+earlier run) is never overwritten. The report summarizes proven percent, proven ratio,
+clamped, invalid marker, ambiguous, missing raw evidence, live, already processed,
+changed concurrently, insufficient provenance and unmeasured rows; it prints no
+payload data. Historical rows without raw retention, and producers outside the
+registry, remain unavailable by design.
+
+**Reader transition.** Dashboards and queries must move their averages and filters to
+the canonical columns; adding the columns does not repair queries that still read the
+legacy ones. Average `completion_ratio` / `rebuffer_fraction` where the stamp is not
+null (a null value with a stamp is a processed unavailable measurement: count it as
+excluded, not zero), keep live views out of completion averages as before, and keep
+reading the legacy columns only for the raw wire values. A canonical null without a
+stamp means the gauge was never measured (or its scale could not be proven and the
+backfill has not run yet).
 
 ### Player privacy options
 
@@ -902,8 +1068,11 @@ browser CORS.
 
 `scarlett:doctor` adds, for beacons: the key, the store binding, the route, the CORS
 recipe, the beacon queue (warns when it shares a queue with clips), the IP column,
-server-side context, the raw-log `seq` column, and the signals and player 1.22
-(`beacon reconnect columns`) upgrade columns.
+server-side context, the raw-log `seq` column, the signals, player 1.22
+(`beacon reconnect columns`) and canonical gauges (`beacon gauge columns`) upgrade
+columns, and any upgrade migration copy, in any
+registered migration path, that sorts before the create migrations it needs
+(`beacon upgrade migration order`, see [Upgrade migrations](#upgrade-migrations)).
 
 ### Testing against beacons
 
@@ -1666,6 +1835,7 @@ falls through to the bound resolver.
 | `v0.3.0` | Still pinned at 1.19.1; additive ingest support for the 1.19.3 source contract | 1.19.1 captured set retained; `tests/Fixtures/wire/1.19.3/` derived (recapture owed) | Knows `beaconSeq` and `seekSource`; nullable raw `seq` orders timestamp ties. On upgrading the player to 1.19.3, `rebuffer_count` drops sharply, mostly on Safari: `waiting` under the default 250 ms `rebufferGraceMs` no longer counts; `rebufferStart` is sent about 250 ms after the stall began, while `rebuffer_ms` still counts from the first `waiting`. `seek_count` and `seeking` rows rise because progress-bar, keyboard, replay and native-control seeks were not sent before 1.19.3. Both are breaks in continuity across the player upgrade, not ingest bugs. No player repin in this package release |
 | `v0.4.0` | Default pin 1.19.1; prepared for 1.20.0 signals and QoE v1/v2 ingest | `tests/Fixtures/wire/signals-candidate/`, real browser captures from the local signals source, still labeled 1.19.3 by its package metadata | Structured errors, nullable scores, interval metrics, page context and privacy options. Published 1.20.0 artifact verification and recapture remain pending; npm returned 404 during preparation. Batching remains off and unsupported |
 | `v0.5.0` | 1.22.x, pinned at 1.22.0 (`player.player_version`, was 1.19.1) | `tests/Fixtures/wire/1.22.0-derived/`, derived (recapture owed); the captured 1.19.1 set retained | Verified against the published npm 1.22.0 analytics, embed, chapters, share and captions packages and the CDN `v1.22.0/` files (byte-identical to npm); the browser test runs the npm 1.22.0 embed bundle. The player harness could not capture 1.22.0: three of its own assertions still expect the pre-1.22 unload subset. Heartbeat and unload `viewEnd` carry every counter; `elementSeekCount`, `reconnectCount`, `reconnectDuration`, `dvrTime`; `reconnecting` and `recovered` events; error `networkState`, `readyState`, `online`, `sourceHost`, `reconnecting`; `pause_ms` and heartbeat-only `media_duration`; `liveEnded`; null bitrates and live `completionRate`. Needs the additive `scarlett-migrations-reconnects` migration. `scarlett_view_errors.fatal` now follows severity. `seek_count` coalesces element seek bursts from 1.22. Embed attributes, `Chapter`/`CaptionSource` shapes, addon files and the share snippet are unchanged from 1.19.1 |
+| `v0.6.0` | 1.22.x, pinned at 1.22.0; ingests the `gaugeScale` marker the analytics gauge-contract release adds to viewEnd (kept as a custom dimension) | Unchanged from `v0.5.0` | Additive canonical gauges: `completion_ratio` / `rebuffer_fraction` with independent stamps, normalized to 0..1 from an explicit marker or the source-audited producer registry (scarlett-player 1.22.0 proven percent; magnitude never decides units). Unknown scale, invalid marker and live completion write a stamped null; legacy `completion_rate` / `rebuffer_ratio` keep the received wire values. Needs the additive `scarlett-migrations-gauges` migration on existing hosts; `beacon gauge columns` doctor check; dry-run-first `scarlett:views:backfill-gauges`. Readers must move averages and filters to the canonical columns (see [Canonical gauges](#canonical-gauges-and-upgrading-from-05)) Also carries the never-released 0.5.1 migration fix: the `scarlett-migrations-signals` and `scarlett-migrations-reconnects` copies are dated at publish time, both upgrade migrations are idempotent and resumable, and a copy that sorts before its tables stops with a named error (see [Upgrade migrations](#upgrade-migrations)) |
 
 Player 1.19.3's `rebufferGraceMs: 0` restores immediate rebuffer counting. Its
 `rebufferStart.timestamp` is the send time, not backdated to the first `waiting`;
