@@ -7,6 +7,7 @@ namespace Hei\ScarlettPlayer;
 use Closure;
 use Hei\ScarlettPlayer\Clips\ClipUrlIssuer;
 use Hei\ScarlettPlayer\Clips\ClipVerifier;
+use Hei\ScarlettPlayer\Commands\BackfillGaugesCommand;
 use Hei\ScarlettPlayer\Commands\BeaconTestCommand;
 use Hei\ScarlettPlayer\Commands\DoctorCommand;
 use Hei\ScarlettPlayer\Commands\PruneViewsCommand;
@@ -197,15 +198,23 @@ class ScarlettPlayerServiceProvider extends ServiceProvider
     // The beacons module.
     private function bootBeacons(): void
     {
-        // Existing hosts must not republish the folder of create migrations.
-        // A stable destination makes repeat publishes skip this upgrade file.
-        $this->publishes([
+        // Existing hosts must not republish the folder of create migrations, and a fresh
+        // install needs only the folder. Each upgrade is dated on publish, which sorts it
+        // after creates published earlier, but not after a folder published in the same
+        // second: then the migration stops with UpgradeMigrationOrderException before
+        // changing anything, and the doctor names the copy. A repeat publish adds another
+        // dated copy, which migrates as a no-op.
+        $this->publishesMigrations([
             __DIR__.'/../database/migrations/0001_01_01_000005_add_signals_to_scarlett_tables.php' => database_path('migrations/0001_01_01_000005_add_signals_to_scarlett_tables.php'),
         ], 'scarlett-migrations-signals');
 
-        $this->publishes([
+        $this->publishesMigrations([
             __DIR__.'/../database/migrations/0001_01_01_000006_add_reconnects_to_scarlett_tables.php' => database_path('migrations/0001_01_01_000006_add_reconnects_to_scarlett_tables.php'),
         ], 'scarlett-migrations-reconnects');
+
+        $this->publishesMigrations([
+            __DIR__.'/../database/migrations/0001_01_01_000007_add_gauges_to_scarlett_tables.php' => database_path('migrations/0001_01_01_000007_add_gauges_to_scarlett_tables.php'),
+        ], 'scarlett-migrations-gauges');
 
         RateLimiter::for('scarlett-beacons', fn (Request $request): Limit => $this->limitFrom(
             config('scarlett-player.beacons.throttle'),
@@ -219,6 +228,7 @@ class ScarlettPlayerServiceProvider extends ServiceProvider
             $this->commands([
                 BeaconTestCommand::class,
                 PruneViewsCommand::class,
+                BackfillGaugesCommand::class,
             ]);
         }
     }
@@ -240,6 +250,8 @@ class ScarlettPlayerServiceProvider extends ServiceProvider
             Doctor\Checks\BeaconSeqColumnCheck::class,
             Doctor\Checks\BeaconSignalsColumnsCheck::class,
             Doctor\Checks\BeaconReconnectColumnsCheck::class,
+            Doctor\Checks\BeaconGaugeColumnsCheck::class,
+            Doctor\Checks\BeaconUpgradeMigrationOrderCheck::class,
             BeaconContextCheck::class,
         ];
     }

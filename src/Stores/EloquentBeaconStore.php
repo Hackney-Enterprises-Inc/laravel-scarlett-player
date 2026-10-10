@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Hei\ScarlettPlayer\Stores;
 
+use Hei\ScarlettPlayer\Beacons\GaugeNormalizer;
 use Hei\ScarlettPlayer\Contracts\BeaconStore;
 use Hei\ScarlettPlayer\Contracts\ResolvesMedia;
 use Hei\ScarlettPlayer\Data\BeaconPayload;
@@ -54,6 +55,11 @@ use Throwable;
  *    - fill-if-absent: a key absent from the payload gets no assignment at all, so
  *      it never touches its column, except null QoE and missing segment members
  *      within a reported interval
+ *    - canonical gauges (gauges upgrade): completion_ratio and rebuffer_fraction
+ *      hold the normalized 0..1 measurement of completionRate/rebufferRatio, each
+ *      with its own stamp; they require an absent stamp or an incoming stamp >=
+ *      the existing one even when the existing value is null, and completion is
+ *      forced null once the row is live by the true-wins rule (see mergeGauges)
  *    The stamps, custom_at and last_event_at are assigned last, because MySQL
  *    evaluates UPDATE assignments left to right with the values already updated,
  *    where Postgres and SQLite read the old row.
@@ -236,6 +242,28 @@ class EloquentBeaconStore implements BeaconStore
             'source_host',
             'reconnecting',
         ],
+    ];
+
+    /** Columns added by the gauges upgrade (migration 7), also checked by doctor. */
+    public const GAUGE_COLUMNS = [
+        self::VIEWS => [
+            'completion_ratio',
+            'completion_ratio_at',
+            'rebuffer_fraction',
+            'rebuffer_fraction_at',
+        ],
+    ];
+
+    /**
+     * Wire gauge key => [canonical ratio column, its stamp]. The legacy LATEST
+     * columns keep the received wire values; these hold the normalized 0..1
+     * measurement with the timestamp of the measurement that wrote it, each
+     * gauge stamped independently. A canonical null with a stamp is a processed
+     * unavailable measurement (live, unknown scale, invalid marker or value).
+     */
+    private const CANONICAL_GAUGES = [
+        'completionRate' => ['completion_ratio', 'completion_ratio_at'],
+        'rebufferRatio' => ['rebuffer_fraction', 'rebuffer_fraction_at'],
     ];
 
     /** Segment measurements are one interval, including unavailable throughput. */
@@ -423,6 +451,14 @@ class EloquentBeaconStore implements BeaconStore
             $row['metrics_at'] = $at;
         }
 
+        // Canonical gauges beside the legacy wire values. A row this beacon
+        // creates live gets its completion stamped unavailable at once: the
+        // true-wins classification can never be cleared, so no numeric
+        // completion may follow.
+        foreach ($this->supportedSignals($this->insertGaugeColumns($payload, $at)) as $column => $value) {
+            $row[$column] = $value;
+        }
+
         if ($payload->custom !== []) {
             $row['custom'] = $this->json($payload->custom);
             $row['custom_stamps'] = $this->json(array_fill_keys(array_keys($payload->custom), self::customStamp($payload)));
@@ -451,6 +487,11 @@ class EloquentBeaconStore implements BeaconStore
 
         $sets = [];
         $bindings = [];
+
+        foreach ($this->mergeGauges($connection, $payload, $at) as $gaugeWrite) {
+            $sets[] = $gaugeWrite[0];
+            array_push($bindings, ...$gaugeWrite[1]);
+        }
 
         foreach ([...$this->eventStamps($payload), ...$this->setOnce($connection, $payload)] as $column => $value) {
             $sets[] = $grammar->wrap($column).' = COALESCE('.$col($column).', ?)';
@@ -525,6 +566,188 @@ class EloquentBeaconStore implements BeaconStore
     private function laterOf(string $target, string $column): string
     {
         return $target.' = CASE WHEN '.$column.' IS NULL OR '.$column.' < ? THEN ? ELSE '.$column.' END';
+    }
+
+    /**
+     * The canonical gauge measurements this beacon carries, normalized after
+     * the pipeline. A gauge the beacon omitted is absent from the result; an
+     * explicit null and an unusable scale, marker or value both yield an
+     * unavailable measurement (null) that the store stamps as processed. A
+     * wrong-typed value (a string completionRate) is not a measurement at
+     * all: the payload classifies it as a host custom dimension that shares
+     * the name, exactly as the legacy columns ignore it, so it is omitted. The
+     * marker is read as an exact whitelisted string from the post-pipeline
+     * custom dimensions; units never come from the view row's set-once
+     * player_version or from a value's magnitude.
+     *
+     * @return array<string, array{0: float|null, 1: string}> wire key => [canonical value, reason]
+     */
+    private function canonicalGauges(BeaconPayload $payload): array
+    {
+        $gauges = [];
+        $markerPresent = array_key_exists('gaugeScale', $payload->custom) || $payload->explicitlyNullGauge('gaugeScale');
+        $marker = $payload->custom['gaugeScale'] ?? null;
+
+        foreach ($this->canonicalColumns() as $key => $columns) {
+            $value = $payload->get($key);
+
+            if ($value === null && ! $payload->explicitlyNullGauge($key)) {
+                continue;
+            }
+
+            $reading = GaugeNormalizer::normalize(
+                $value,
+                $markerPresent,
+                $marker,
+                $payload->get('playerName'),
+                $payload->get('playerVersion'),
+            );
+
+            $gauges[$key] = [$reading->value, $reading->reason];
+        }
+
+        return $gauges;
+    }
+
+    /**
+     * The canonical gauges whose value and stamp columns both exist. A gauge
+     * is written only as a complete pair, so a host whose gauges upgrade was
+     * interrupted (MySQL adds the columns one statement at a time) or added
+     * them by hand keeps ingesting the gauges it can store.
+     *
+     * @return array<string, array{0: string, 1: string}>
+     */
+    private function canonicalColumns(): array
+    {
+        return array_filter(self::CANONICAL_GAUGES, fn (array $columns): bool => isset(
+            $this->signalColumns[self::VIEWS][$columns[0]],
+            $this->signalColumns[self::VIEWS][$columns[1]],
+        ));
+    }
+
+    /**
+     * The canonical gauge columns for a row this beacon inserts, with their
+     * stamps; empty on a schema without the gauge columns.
+     *
+     * @return array<string, float|string|null>
+     */
+    private function insertGaugeColumns(BeaconPayload $payload, string $at): array
+    {
+        $gauges = $this->canonicalGauges($payload);
+
+        // A row established live by this beacon has no completion, whatever
+        // the beacon itself carried for the gauge.
+        if ($payload->get('isLive') === true && isset($this->canonicalColumns()['completionRate'])) {
+            $gauges['completionRate'] = [null, GaugeNormalizer::REASON_EXPLICIT_NULL];
+        }
+
+        $columns = [];
+
+        foreach ($gauges as $key => [$value]) {
+            [$column, $stamp] = self::CANONICAL_GAUGES[$key];
+            $columns[$column] = $value;
+            $columns[$stamp] = $at;
+        }
+
+        return $columns;
+    }
+
+    /**
+     * Canonical gauge assignments for the merge, decided under an explicit
+     * locked row read so they do not depend on the custom/server maps
+     * happening to read the row. The legacy gauge columns keep their
+     * latest-by-timestamp rules; the canonical columns instead require an
+     * absent stamp or an incoming stamp >= the existing one even when the
+     * existing value is null, so a processed-unavailable measurement is never
+     * refilled by an older numeric. Once the row is live by the true-wins
+     * rule, completion_ratio is forced null regardless of arrival order or of
+     * a beacon carrying no gauge at all; the stamp records when that
+     * unavailability was established and never moves backwards. Values are
+     * assigned before their stamps (MySQL evaluates left to right).
+     *
+     * A gauge whose canonical stamp is absent but whose legacy column holds a
+     * newer measurement (a row written before the gauges upgrade) is left for
+     * the backfill: a delayed older beacon must not stamp it first, because
+     * the backfill never touches a stamped canonical field and would then
+     * keep the older value.
+     *
+     * @return list<array{0: string, 1: list<mixed>}> [SET clause, bindings]
+     */
+    private function mergeGauges(Connection $connection, BeaconPayload $payload, string $at): array
+    {
+        $available = $this->canonicalColumns();
+
+        if ($available === []) {
+            return [];
+        }
+
+        $gauges = $this->canonicalGauges($payload);
+        $incomingLive = $payload->get('isLive') === true && isset($available['completionRate']);
+
+        if ($gauges === [] && ! $incomingLive) {
+            return [];
+        }
+
+        $select = ['is_live'];
+        foreach ($available as $key => [$column, $stamp]) {
+            array_push($select, $column, $stamp, self::LATEST[$key][1]);
+        }
+
+        $row = $connection->table(self::VIEWS)
+            ->where('view_id', $payload->viewId)
+            ->lockForUpdate()
+            ->first($select);
+
+        if ($row === null) {
+            return [];
+        }
+
+        // A live classification establishes an unavailable completion even
+        // when this beacon carries no gauge.
+        if ($incomingLive) {
+            $gauges['completionRate'] = [null, GaugeNormalizer::REASON_EXPLICIT_NULL];
+        }
+
+        $live = (bool) $row->is_live || $incomingLive;
+        $grammar = $connection->getQueryGrammar();
+        $writes = [];
+
+        foreach ($available as $key => [$column, $stamp]) {
+            if (! isset($gauges[$key])) {
+                continue;
+            }
+
+            [$value] = $gauges[$key];
+            $existingStamp = $row->{$stamp} === null ? null : (string) $row->{$stamp};
+
+            if ($key === 'completionRate' && $live) {
+                // The stamp records the transition to unavailable; a row that
+                // was already null and stamped keeps its stamp.
+                if ($row->{$column} === null && $existingStamp !== null) {
+                    continue;
+                }
+
+                $writes[] = [$grammar->wrap($column).' = ?', [null]];
+                $writes[] = [$grammar->wrap($stamp).' = ?', [$existingStamp !== null && strcmp($existingStamp, $at) > 0 ? $existingStamp : $at]];
+
+                continue;
+            }
+
+            if ($existingStamp !== null && strcmp($at, $existingStamp) < 0) {
+                continue;
+            }
+
+            $legacyStamp = $row->{self::LATEST[$key][1]};
+
+            if ($existingStamp === null && $legacyStamp !== null && strcmp($at, (string) $legacyStamp) < 0) {
+                continue;
+            }
+
+            $writes[] = [$grammar->wrap($column).' = ?', [$value]];
+            $writes[] = [$grammar->wrap($stamp).' = ?', [$at]];
+        }
+
+        return $writes;
     }
 
     /**
@@ -824,7 +1047,7 @@ class EloquentBeaconStore implements BeaconStore
      */
     private function supportedSignals(array $columns, string $table = self::VIEWS): array
     {
-        $optional = [...self::SIGNAL_COLUMNS[$table], ...self::RECONNECT_COLUMNS[$table]];
+        $optional = [...self::SIGNAL_COLUMNS[$table], ...self::RECONNECT_COLUMNS[$table], ...(self::GAUGE_COLUMNS[$table] ?? [])];
 
         return array_filter($columns, fn (string $column): bool => ! in_array($column, $optional, true)
             || isset($this->signalColumns[$table][$column]), ARRAY_FILTER_USE_KEY);

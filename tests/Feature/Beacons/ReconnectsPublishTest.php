@@ -44,7 +44,7 @@ it('publishes only the reconnects upgrade on a host with timestamped originals a
         Date::setTestNow('2026-10-06 12:00:00');
         $this->artisan('vendor:publish', ['--tag' => 'scarlett-migrations-reconnects'])->assertSuccessful();
         expect(glob($destination.'/*.php'))->toHaveCount(6)
-            ->and(file_exists($destination.'/0001_01_01_000006_add_reconnects_to_scarlett_tables.php'))->toBeTrue();
+            ->and(file_exists($destination.'/2026_10_06_120001_add_reconnects_to_scarlett_tables.php'))->toBeTrue();
         $this->artisan('migrate', $options)->assertSuccessful();
         expect(Schema::hasColumns('scarlett_views', ['element_seek_count', 'reconnect_count', 'reconnect_ms', 'dvr_ms', 'pause_ms', 'media_duration', 'media_duration_at']))->toBeTrue()
             ->and(Schema::hasColumns('scarlett_view_errors', ['network_state', 'ready_state', 'online', 'source_host', 'reconnecting']))->toBeTrue();
@@ -59,8 +59,10 @@ it('publishes only the reconnects upgrade on a host with timestamped originals a
         Date::setTestNow('2026-10-07 12:00:00');
         $this->artisan('vendor:publish', ['--tag' => 'scarlett-migrations-reconnects'])->assertSuccessful();
         $this->artisan('migrate', $options)->assertSuccessful();
-        expect(glob($destination.'/*.php'))->toHaveCount(6)
-            ->and(DB::table('migrations')->count())->toBe(6);
+        // A repeat publish adds a second dated copy, which migrates as a no-op.
+        expect(glob($destination.'/*.php'))->toHaveCount(7)
+            ->and(DB::table('migrations')->count())->toBe(7)
+            ->and(Schema::hasColumns('scarlett_views', ['reconnect_count', 'pause_ms']))->toBeTrue();
     } finally {
         Artisan::call('migrate:reset', $options);
         Date::setTestNow();
