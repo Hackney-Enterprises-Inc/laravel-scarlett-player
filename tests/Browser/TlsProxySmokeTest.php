@@ -10,41 +10,60 @@ use Symfony\Component\Process\Process;
  * Proves tests/Browser/support/tls-proxy.mjs is invisible, which the beacon CORS
  * browser tests depend on: a plain-http echo target (support/echo-target.php on
  * PHP's built-in server) sits behind the proxy, and each request is compared with
- * what the target received and what it answered. Ports sit away from the 8001,
- * 8002 and 8443 defaults so a running ingest or page server is never hit.
+ * what the target received and what it answered. Ports are free ones the OS
+ * picks for each run, never the 8001, 8002 and 8443 defaults, so a running ingest
+ * or page server is never hit. Fixed high ports sit in Linux's ephemeral range,
+ * where an earlier test's client socket can hold them (CI saw "Address already
+ * in use" on 48002 after BeaconCorsTest).
  */
 
-const SMOKE_TARGET = '127.0.0.1:48002';
-const SMOKE_PROXY = '127.0.0.1:48443';
 const SMOKE_ORIGIN = 'http://127.0.0.1:8001';
 
+/** A free 127.0.0.1 port, as host:port. */
+function smokeFreeAddress(): string
+{
+    $socket = stream_socket_server('tcp://127.0.0.1:0', $errno, $errstr);
+
+    if ($socket === false) {
+        throw new RuntimeException("No free port for the TLS proxy smoke test: {$errstr}");
+    }
+
+    $name = (string) stream_socket_get_name($socket, false);
+    fclose($socket);
+
+    return $name;
+}
+
 /**
- * Starts the echo target and the proxy, runs the callback, and always stops both.
+ * Starts the echo target and the proxy, runs the callback with their addresses,
+ * and always stops both.
  *
- * @param  Closure(): void  $callback
+ * @param  Closure(string, string): void  $callback  receives the proxy, then the target
  */
 function smokeWithTlsProxy(Closure $callback): void
 {
     $root = dirname(__DIR__, 2);
     $support = __DIR__.'/support';
+    $targetAddress = smokeFreeAddress();
+    $proxyAddress = smokeFreeAddress();
 
     $cert = new Process(['sh', $support.'/make-cert.sh'], $root);
     $cert->mustRun();
 
-    $target = new Process([PHP_BINARY, '-S', SMOKE_TARGET, $support.'/echo-target.php'], $root);
+    $target = new Process([PHP_BINARY, '-S', $targetAddress, $support.'/echo-target.php'], $root);
     $proxy = new Process(['node', $support.'/tls-proxy.mjs'], $root, [
-        'SCARLETT_PROXY_LISTEN' => SMOKE_PROXY,
-        'SCARLETT_PROXY_TARGET' => 'http://'.SMOKE_TARGET,
+        'SCARLETT_PROXY_LISTEN' => $proxyAddress,
+        'SCARLETT_PROXY_TARGET' => 'http://'.$targetAddress,
     ]);
 
     try {
         $target->start();
-        smokeWaitForPort(SMOKE_TARGET, $target);
+        smokeWaitForPort($targetAddress, $target);
 
         $proxy->start();
         $proxy->waitUntil(fn (string $type, string $output): bool => str_contains($output, 'tls-proxy listening on'));
 
-        $callback();
+        $callback($proxyAddress, $targetAddress);
     } finally {
         $proxy->stop(5, SIGTERM);
         $target->stop(5);
@@ -94,18 +113,18 @@ function smokeComparableHeaders(Response $response): array
 it('passes an OPTIONS preflight through with its Origin and returns the target headers verbatim', function (): void {
     Http::allowStrayRequests();
 
-    smokeWithTlsProxy(function (): void {
+    smokeWithTlsProxy(function (string $proxyAddress, string $targetAddress): void {
         $send = fn (string $base): Response => Http::withOptions(['verify' => false])
             ->withHeaders([
                 'Origin' => SMOKE_ORIGIN,
-                'Host' => SMOKE_PROXY,
+                'Host' => $proxyAddress,
                 'Access-Control-Request-Method' => 'POST',
                 'Access-Control-Request-Headers' => 'content-type,x-api-key',
             ])
             ->send('OPTIONS', $base.'/api/scarlett/beacons');
 
-        $proxied = $send('https://'.SMOKE_PROXY);
-        $direct = $send('http://'.SMOKE_TARGET);
+        $proxied = $send('https://'.$proxyAddress);
+        $direct = $send('http://'.$targetAddress);
 
         expect($proxied->status())->toBe(200)
             ->and($proxied->header('X-Scarlett-Echo'))->toBe('target')
@@ -122,13 +141,13 @@ it('passes an OPTIONS preflight through with its Origin and returns the target h
 it('passes a POST through with its query string and a byte-identical body', function (): void {
     Http::allowStrayRequests();
 
-    smokeWithTlsProxy(function (): void {
+    smokeWithTlsProxy(function (string $proxyAddress): void {
         $body = json_encode(['event' => 'viewEnd', 'viewId' => 'v-1', 'videoTitle' => "caf\u{e9} \u{1f3ac}"], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
 
         $response = Http::withOptions(['verify' => false])
             ->withHeaders(['Origin' => SMOKE_ORIGIN])
             ->withBody($body, 'application/json')
-            ->post('https://'.SMOKE_PROXY.'/api/scarlett/beacons?api_key=abc');
+            ->post('https://'.$proxyAddress.'/api/scarlett/beacons?api_key=abc');
 
         expect($response->status())->toBe(201)
             ->and($response->header('X-Scarlett-Echo'))->toBe('target')
@@ -150,10 +169,12 @@ it('returns a 204 the target misframes as chunked as that 204, never a 502', fun
 
     (new Process(['sh', $support.'/make-cert.sh'], $root))->mustRun();
 
-    $target = new Process(['node', $support.'/misframed-target.mjs', '48004'], $root);
+    $targetAddress = smokeFreeAddress();
+    $proxyAddress = smokeFreeAddress();
+    $target = new Process(['node', $support.'/misframed-target.mjs', substr($targetAddress, strrpos($targetAddress, ':') + 1)], $root);
     $proxy = new Process(['node', $support.'/tls-proxy.mjs'], $root, [
-        'SCARLETT_PROXY_LISTEN' => SMOKE_PROXY,
-        'SCARLETT_PROXY_TARGET' => 'http://127.0.0.1:48004',
+        'SCARLETT_PROXY_LISTEN' => $proxyAddress,
+        'SCARLETT_PROXY_TARGET' => 'http://'.$targetAddress,
     ]);
 
     try {
@@ -164,7 +185,7 @@ it('returns a 204 the target misframes as chunked as that 204, never a 502', fun
 
         $response = Http::withOptions(['verify' => false])
             ->withHeaders(['Origin' => SMOKE_ORIGIN, 'Access-Control-Request-Method' => 'POST'])
-            ->send('OPTIONS', 'https://'.SMOKE_PROXY.'/api/scarlett/beacons?api_key=abc');
+            ->send('OPTIONS', 'https://'.$proxyAddress.'/api/scarlett/beacons?api_key=abc');
 
         expect($response->status())->toBe(204)
             ->and($response->header('X-Scarlett-Echo'))->toBe('misframed')

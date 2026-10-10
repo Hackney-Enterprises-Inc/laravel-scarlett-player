@@ -334,6 +334,44 @@ it('treats evidence whose scale keys the server context set as ambiguous', funct
     'version' => [['playerName' => 'scarlett-player', 'playerVersion' => '1.21.0'], ['playerVersion' => '1.22.0']],
 ]);
 
+it('proves the scale from an event newer than the server key it did not carry', function (): void {
+    // The merged view map holds playerVersion from an earlier heartbeat; the
+    // viewEnd is newer, so it carried none (it would have won the merge).
+    ingestBeforeGaugeColumns([
+        Beacons::payload('heartbeat', 5, [])->withServer(['playerVersion' => '1.21.0']),
+        Beacons::payload('viewEnd', 10, [
+            'exitType' => 'abandoned', 'completionRate' => 37.5,
+            'playerName' => 'scarlett-player', 'playerVersion' => '1.22.0',
+        ]),
+    ]);
+
+    $this->artisan('scarlett:views:backfill-gauges', ['--apply' => true])->assertSuccessful();
+
+    $row = DB::table('scarlett_views')->where('view_id', Beacons::VIEW)->sole();
+    expect((float) $row->completion_ratio)->toBe(0.375)
+        ->and(backfillStamp($row, 'completion_ratio_at'))->toBe(EloquentBeaconStore::clientTime(Beacons::T0 + 10));
+});
+
+it('leaves a measurement unprocessed when a later beacon set a server scale key', function (): void {
+    // A later beacon wrote playerVersion to the merged map; whether the older
+    // viewEnd carried it too cannot be proven, so nothing is stamped.
+    ingestBeforeGaugeColumns([
+        Beacons::payload('viewEnd', 10, [
+            'exitType' => 'abandoned', 'completionRate' => 37.5,
+            'playerName' => 'scarlett-player', 'playerVersion' => '1.22.0',
+        ]),
+        Beacons::payload('heartbeat', 20, [])->withServer(['playerVersion' => '1.21.0']),
+    ]);
+
+    $this->artisan('scarlett:views:backfill-gauges', ['--apply' => true])
+        ->expectsOutputToContain('server ownership unknown')
+        ->assertSuccessful();
+
+    $row = DB::table('scarlett_views')->where('view_id', Beacons::VIEW)->sole();
+    expect($row->completion_ratio)->toBeNull()
+        ->and($row->completion_ratio_at)->toBeNull();
+});
+
 it('still proves the scale when the server context sets only unrelated keys', function (): void {
     ingestBeforeGaugeColumns([Beacons::payload('viewEnd', 10, [
         'exitType' => 'abandoned', 'completionRate' => 37.5,

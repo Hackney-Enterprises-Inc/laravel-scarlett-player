@@ -73,7 +73,7 @@ class BeaconUpgradeMigrationOrderCheck implements Check
         }
 
         if ($misplaced !== []) {
-            return CheckResult::warn(implode('; ', $misplaced).'. A fresh migrate runs it before the table exists and stops. A database that already ran it is fine. Delete the copy if another copy sorts after the creates (a full scarlett-migrations publish from 0.4.0 contains the signals upgrade, from 0.5.0 the reconnects one); otherwise delete a fixed 0001_01_01_ name and publish its tag again, or rename a dated copy to sort after the create migrations.');
+            return CheckResult::warn(implode('; ', $misplaced).'. A fresh migrate runs it before the table exists and stops. A database that already ran it is fine. Delete the copy if another copy sorts after the creates (a full scarlett-migrations publish from 0.4.0 contains the signals upgrade, from 0.5.0 the reconnects one, from 0.6.0 the gauges one); otherwise delete a fixed 0001_01_01_ name and publish its tag again, or rename a dated copy to sort after the create migrations.');
         }
 
         return CheckResult::pass('every scarlett upgrade migration sorts after the create migrations');

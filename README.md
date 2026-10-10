@@ -143,7 +143,7 @@ older string form) has it off and gets the file under its `0001_01_01_...` name:
 `'migrations' => ['table' => 'migrations', 'update_date_on_publish' => true]` before
 publishing, or write your own dated migration (below).
 
-Both upgrade migrations are idempotent from 0.6.0. A column that already exists is left
+All three upgrade migrations are idempotent from 0.6.0. A column that already exists is left
 alone, so publishing a tag twice (each publish adds another dated copy), a database that
 already ran an earlier copy, or a host that added the columns itself all migrate as a
 no-op. The signals migration adds `qoe_version` first, on its own, and marks existing
@@ -181,8 +181,8 @@ order and there is nothing to repair.
 **Owning the schema instead.** A host that writes its own dated migrations can copy the
 column lists from the upgrade sections below (every column nullable; `*_at` columns are
 `dateTime` with precision 3) and skip the tags. Name the file with the package's suffix
-(`..._add_signals_to_scarlett_tables.php`, `..._add_reconnects_to_scarlett_tables.php`)
-if a published copy may also run, so a rollback of that copy keeps your columns.
+(`..._add_signals_to_scarlett_tables.php`, `..._add_reconnects_to_scarlett_tables.php`,
+`..._add_gauges_to_scarlett_tables.php`) if a published copy may also run, so a rollback of that copy keeps your columns.
 
 ### Routes
 
@@ -714,16 +714,20 @@ and missing raw retention leaves the value unavailable. The raw log keeps an exp
 `gaugeScale: null` (from 0.6.0 on), so it stays an invalid marker as at ingest; raw
 logs written by earlier versions dropped it, and Scarlett 1.22.0 never sends one. The
 raw log also lays the server context over the browser's keys, while ingest reads the
-marker and producer only from the browser's, so on a view whose server context set
-`gaugeScale`, `playerName` or `playerVersion` the evidence is ambiguous. Ambiguous or missing-evidence measurements with a
+marker and producer only from the browser's. The view's server map is merged across
+beacons, so ownership of `gaugeScale`, `playerName` and `playerVersion` is decided per
+event from `server_stamps`: evidence from the event that last wrote one of them is
+ambiguous, evidence newer than every such writer is the browser's, and evidence older
+than a writer is left unprocessed (no stamp, reported as server ownership unknown) so a
+later rerun can still recover it. Ambiguous or missing-evidence measurements with a
 trustworthy legacy stamp get a canonical null plus that stamp once, so a rerun resumes
 without dividing twice; rows whose legacy stamp is missing are reported and left
 untouched. Writes are compare-and-swap against the observed legacy value/stamp and the
 canonical stamp, so live ingest wins a race and a canonical stamp (from ingest or an
 earlier run) is never overwritten. The report summarizes proven percent, proven ratio,
-clamped, invalid marker, ambiguous, missing raw evidence, live, already processed,
-changed concurrently, insufficient provenance and unmeasured rows; it prints no
-payload data. Historical rows without raw retention, and producers outside the
+clamped, invalid marker, ambiguous, missing raw evidence, server ownership unknown,
+live, already processed, changed concurrently, insufficient provenance and unmeasured
+rows; it prints no payload data. Historical rows without raw retention, and producers outside the
 registry, remain unavailable by design.
 
 **Reader transition.** Dashboards and queries must move their averages and filters to

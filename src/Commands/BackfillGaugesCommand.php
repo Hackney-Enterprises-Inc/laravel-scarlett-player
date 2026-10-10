@@ -24,9 +24,11 @@ use stdClass;
  * same inputs ingest reads. The raw log keeps an explicit null marker, so it
  * stays invalid here as at ingest. It also overlays the server context on the
  * browser's keys, while ingest reads the marker and producer only from the
- * browser: when the view's server map holds any of those keys, the evidence
- * cannot show what ingest would have seen, and the measurement is ambiguous. Tied
- * conflicting evidence is ambiguous. Missing raw retention leaves the value
+ * browser. The view's server map is merged across beacons, so ownership is
+ * decided per event from server_stamps: evidence from the event that last wrote
+ * a scale key is ambiguous, evidence newer than every scale key's writer is the
+ * browser's, and anything else is left unprocessed (server ownership unknown) so
+ * a later rerun can still recover it. Tied conflicting evidence is ambiguous. Missing raw retention leaves the value
  * unavailable. Ambiguous or missing-evidence measurements with a trustworthy
  * legacy stamp get a canonical null plus that stamp once, marking the
  * measurement processed so reruns resume instead of refilling it. Rows whose
@@ -59,6 +61,9 @@ class BackfillGaugesCommand extends Command
 
     /** The raw evidence keys that decide a scale; a server-owned one is not the browser's. */
     private const SCALE_KEYS = ['gaugeScale', 'playerName', 'playerVersion'];
+
+    /** Report bucket for evidence whose server ownership cannot be proven; never written. */
+    private const OWNERSHIP_UNKNOWN = 'server ownership unknown';
 
     private const CANONICAL_COLUMNS = [
         'completion_ratio', 'completion_ratio_at', 'rebuffer_fraction', 'rebuffer_fraction_at',
@@ -97,7 +102,7 @@ class BackfillGaugesCommand extends Command
         $apply = (bool) $this->option('apply');
         $summary = array_fill_keys([
             'proven percent', 'proven ratio', 'clamped', 'invalid marker', 'ambiguous',
-            'missing raw evidence', 'live unavailable', 'already processed',
+            'missing raw evidence', self::OWNERSHIP_UNKNOWN, 'live unavailable', 'already processed',
             'changed concurrently', 'insufficient provenance', 'no measurement', 'written',
         ], 0);
 
@@ -173,6 +178,14 @@ class BackfillGaugesCommand extends Command
         }
 
         [$value, $bucket] = $this->decide($connection, $row, $spec, $legacyValue, $legacyStamp);
+
+        if ($bucket === self::OWNERSHIP_UNKNOWN) {
+            // No canonical stamp: the measurement stays unprocessed for a rerun.
+            $summary[$bucket]++;
+
+            return;
+        }
+
         $this->write($connection, $row, $spec, $value, $legacyValue, $legacyStamp, $apply, $summary, $bucket);
     }
 
@@ -186,12 +199,13 @@ class BackfillGaugesCommand extends Command
     private function decide(Connection $connection, stdClass $row, array $spec, mixed $legacyValue, string $legacyStamp): array
     {
         $matching = [];
+        $ownership = [];
 
         foreach ($connection->table(EloquentBeaconStore::EVENTS)
             ->where('view_id', $row->view_id)
             ->where('occurred_at', $legacyStamp)
-            ->pluck('payload') as $json) {
-            $payload = is_string($json) ? json_decode($json, true) : null;
+            ->get(['event_key', 'payload']) as $event) {
+            $payload = is_string($event->payload) ? json_decode($event->payload, true) : null;
 
             if (! is_array($payload) || ! array_key_exists($spec['wire'], $payload)) {
                 continue;
@@ -201,6 +215,7 @@ class BackfillGaugesCommand extends Command
 
             if ((is_int($candidate) || is_float($candidate)) && (float) $candidate === (float) $legacyValue) {
                 $matching[] = $payload;
+                $ownership[] = $this->serverOwnership($row, (string) $event->event_key, $payload['timestamp'] ?? null);
             }
         }
 
@@ -208,8 +223,12 @@ class BackfillGaugesCommand extends Command
             return [null, 'missing raw evidence'];
         }
 
-        if ($this->serverOwnsScaleKey($row)) {
+        if (in_array('server', $ownership, true)) {
             return [null, 'ambiguous'];
+        }
+
+        if (in_array('unknown', $ownership, true)) {
+            return [null, self::OWNERSHIP_UNKNOWN];
         }
 
         $readings = [];
@@ -249,16 +268,48 @@ class BackfillGaugesCommand extends Command
     }
 
     /**
-     * Whether the view's server context set a key the scale is decided from.
-     * The raw log replaces the browser's value with it, so the evidence no
-     * longer shows the browser's. Tables without the server column never had
-     * a server context.
+     * Who set this event's scale keys in the raw log: 'server' when the event is
+     * the recorded writer of a server-held scale key (the raw log overlays the
+     * server's value, so it no longer shows the browser's), 'browser' when the
+     * view holds none or the event is newer than every one's writer (the merge
+     * takes any newer-or-equal server value, so it carried none), and 'unknown'
+     * otherwise: an older event, or a key without a stamp, may have carried it.
+     * The view's server map is merged across beacons and is not evidence for an
+     * individual event on its own. Tables without the server column never had a
+     * server context.
      */
-    private function serverOwnsScaleKey(stdClass $row): bool
+    private function serverOwnership(stdClass $row, string $eventKey, mixed $timestamp): string
     {
         $server = property_exists($row, 'server') && is_string($row->server) ? json_decode($row->server, true) : null;
+        $owned = is_array($server) ? array_intersect(self::SCALE_KEYS, array_map('strval', array_keys($server))) : [];
 
-        return is_array($server) && array_intersect(self::SCALE_KEYS, array_keys($server)) !== [];
+        if ($owned === []) {
+            return 'browser';
+        }
+
+        $stamps = property_exists($row, 'server_stamps') && is_string($row->server_stamps) ? json_decode($row->server_stamps, true) : null;
+
+        if (! is_int($timestamp) || ! is_array($stamps)) {
+            return 'unknown';
+        }
+
+        // EloquentBeaconStore::customStamp() for this event, the merge's order.
+        $eventStamp = sprintf('%015d:%s', $timestamp, $eventKey);
+        $result = 'browser';
+
+        foreach ($owned as $key) {
+            $stamp = $stamps[$key] ?? null;
+
+            if (! is_string($stamp)) {
+                $result = 'unknown';
+            } elseif ($stamp === $eventStamp) {
+                return 'server';
+            } elseif (strcmp($eventStamp, $stamp) < 0) {
+                $result = 'unknown';
+            }
+        }
+
+        return $result;
     }
 
     /**

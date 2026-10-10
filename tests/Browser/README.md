@@ -49,7 +49,8 @@ query string are untouched (the unload beacon carries `?api_key=`), and the inge
 and response headers come back verbatim, `Access-Control-*` included. The one
 normalisation: a header name repeated with different case goes out under its first
 spelling, with every value in order. `TlsProxySmokeTest.php` proves this against an echo
-target (`support/echo-target.php`) on ports 48002 and 48443, away from the defaults, and
+target (`support/echo-target.php`) on free ports the OS picks per run, away from the
+defaults (fixed high ports sit in Linux's ephemeral range and can be held), and
 that a response the target misframes (a 204 with `transfer-encoding: chunked`, which the
 browser plugin's amphp server sends for a preflight; `support/misframed-target.mjs`) comes
 back as that response rather than a 502.
