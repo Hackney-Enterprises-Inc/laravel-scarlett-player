@@ -35,8 +35,8 @@ it('posts a view with a reconnect through the header and the query key paths', f
 
     expect($header->map(fn (Request $request): string => $request['event'])->values()->all())->toBe($events)
         ->and($query->map(fn (Request $request): string => $request['event'])->values()->all())->toBe($events)
-        ->and($headerEnd)->toMatchArray(['isLive' => false, 'exitType' => 'abandoned', 'avgBitrate' => null, 'maxBitrate' => null])
-        ->and($queryEnd)->toMatchArray(['isLive' => true, 'exitType' => 'liveEnded', 'completionRate' => null, 'avgBitrate' => null, 'maxBitrate' => null])
+        ->and($headerEnd)->toMatchArray(['isLive' => false, 'exitType' => 'abandoned', 'avgBitrate' => null, 'maxBitrate' => null, 'playerVersion' => 'beacon-test', 'gaugeScale' => 'percent'])
+        ->and($queryEnd)->toMatchArray(['isLive' => true, 'exitType' => 'liveEnded', 'completionRate' => null, 'avgBitrate' => null, 'maxBitrate' => null, 'playerVersion' => 'beacon-test', 'gaugeScale' => 'percent'])
         ->and($query->every(fn (Request $request): bool => $request->header('X-API-Key') === []))->toBeTrue()
         ->and($sent->every(fn (Request $request): bool => str_starts_with((string) $request['viewId'], BeaconTestCommand::VIEW_PREFIX)))->toBeTrue();
 });
@@ -114,7 +114,10 @@ it('stores the command\'s sample views with null bitrates, reconnects and a live
         ->and($views[1]->media_duration)->toBeNull()
         ->and($views->every(fn ($view): bool => (int) $view->pause_ms === 0))->toBeTrue()
         ->and($views->every(fn ($view): bool => $view->avg_bitrate === null && $view->max_bitrate === null && (int) $view->reconnect_count === 1))->toBeTrue()
-        ->and(DB::table('scarlett_view_errors')->count())->toBe(0);
+        ->and(DB::table('scarlett_view_errors')->count())->toBe(0)
+        ->and($views->every(fn ($view): bool => $view->completion_ratio_at !== null && $view->rebuffer_fraction_at !== null))->toBeTrue()
+        ->and((float) $views[0]->completion_ratio)->toBe(0.0)
+        ->and($views[1]->completion_ratio)->toBeNull();
 });
 
 it('prunes raw events, errors and views past their retention', function (): void {

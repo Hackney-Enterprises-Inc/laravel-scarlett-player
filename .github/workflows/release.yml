@@ -33,7 +33,7 @@ concurrency:
 jobs:
   resolve:
     name: resolve the version
-    runs-on: ubuntu-24.04
+    runs-on: namespace-profile-hackney
     outputs:
       tag: ${{ steps.resolve.outputs.tag }}
       version: ${{ steps.resolve.outputs.version }}
@@ -114,12 +114,18 @@ jobs:
     name: verify the release commit
     needs: resolve
     if: needs.resolve.outputs.needed != 'no'
-    runs-on: ubuntu-24.04
+    runs-on: namespace-profile-hackney
     steps:
       - uses: actions/checkout@v5
         with:
           ref: ${{ needs.resolve.outputs.ref }}
           fetch-depth: 0
+
+      # The publish job needs the GitHub CLI. Checked here, before the tag job
+      # pushes anything, so a runner image without it stops the release instead
+      # of leaving a tag with no GitHub release.
+      - name: the GitHub CLI is present
+        run: gh --version
 
       # Packagist reads the version from the tag, so a tag that does not match
       # semver publishes a version nobody can require.
@@ -180,7 +186,7 @@ jobs:
     name: tag the release commit
     needs: [resolve, verify]
     if: needs.resolve.outputs.needed == 'tag'
-    runs-on: ubuntu-24.04
+    runs-on: namespace-profile-hackney
     permissions:
       contents: write
     steps:
@@ -212,7 +218,7 @@ jobs:
       && needs.resolve.outputs.needed != 'no'
       && needs.verify.result == 'success'
       && (needs.tag.result == 'success' || needs.tag.result == 'skipped')
-    runs-on: ubuntu-24.04
+    runs-on: namespace-profile-hackney
     permissions:
       contents: write
     steps:
