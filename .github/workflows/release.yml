@@ -161,6 +161,12 @@ jobs:
 
       - run: composer validate --strict
 
+      # The initialiser tests need Node 22.15+ (module.registerHooks()); pinned, as in
+      # tests.yml, rather than taken from the runner image.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+
       - uses: ramsey/composer-install@v4
 
       # The three gates, the same ones a local hand-off runs.
