@@ -21,12 +21,6 @@ file's header comment changed, and the 1.17.0 copy was removed. The `Chapter` in
 `@scarlett-player/core@1.19.1` and `CaptionSource` in `@scarlett-player/captions@1.19.1` are
 unchanged from 1.17.0.
 
-Re-lifted for 1.24.0: the function is byte-identical to the 1.22.0 one (compared as text, the
-1.22.0 `dist/index.js` sha256 `e2c81b61...15f0`); only the version in the file's header comment
-changed, and the 1.22.0 copy was removed. The `Chapter` interface in `@scarlett-player/core@1.24.0`
-(`dist/types/state.d.ts`) and `CaptionSource` in `@scarlett-player/captions@1.24.0`
-(`dist/index.d.ts`) are byte-identical to 1.22.0.
-
 Re-lifted for 1.22.0: the function is byte-identical to the 1.19.1 one (compared as text,
 the 1.19.1 copy with `dist/index.js` sha256 `88d74f3f...713636d`); only the version in the
 file's header comment changed, and the 1.19.1 copy was removed. The `Chapter` interface in
@@ -34,3 +28,9 @@ file's header comment changed, and the 1.19.1 copy was removed. The `Chapter` in
 `subtitle?`, `thumbnail?`, `metadata?`) and `CaptionSource` in
 `@scarlett-player/captions@1.22.0` (`language`, `label`, `src`, `kind?`, `default?`) are
 unchanged.
+
+Re-lifted for 1.24.0: the function is byte-identical to the 1.22.0 one (compared as text, the
+1.22.0 `dist/index.js` sha256 `e2c81b61...15f0`); only the version in the file's header comment
+changed, and the 1.22.0 copy was removed. The `Chapter` interface in `@scarlett-player/core@1.24.0`
+(`dist/types/state.d.ts`) and `CaptionSource` in `@scarlett-player/captions@1.24.0`
+(`dist/index.d.ts`) are byte-identical to 1.22.0.
