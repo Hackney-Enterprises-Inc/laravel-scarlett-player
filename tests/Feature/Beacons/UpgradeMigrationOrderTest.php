@@ -381,7 +381,7 @@ it('publishes all seven for a fresh install and adds only no-op copies when an u
 it('publishes every migration tag in one command in a migratable order', function (): void {
     // The same path set `--provider` publishes for migrations.
     Date::setTestNow('2026-10-07 12:00:00');
-    $this->artisan('vendor:publish', ['--tag' => ['scarlett-migrations', 'scarlett-migrations-signals', 'scarlett-migrations-reconnects', 'scarlett-migrations-gauges']])->assertSuccessful();
+    $this->artisan('vendor:publish', ['--tag' => ['scarlett-migrations', 'scarlett-migrations-signals', 'scarlett-migrations-reconnects', 'scarlett-migrations-gauges', 'scarlett-migrations-diagnostics']])->assertSuccessful();
     expect(array_values(array_filter(upgradeFiles($this->destination), fn (string $file): bool => str_contains($file, '_scarlett_'))))->toBe([
         '2026_10_07_120001_create_scarlett_views_table.php',
         '2026_10_07_120002_create_scarlett_beacon_events_table.php',
@@ -390,12 +390,16 @@ it('publishes every migration tag in one command in a migratable order', functio
         '2026_10_07_120005_add_signals_to_scarlett_tables.php',
         '2026_10_07_120006_add_reconnects_to_scarlett_tables.php',
         '2026_10_07_120007_add_gauges_to_scarlett_tables.php',
-        '2026_10_07_120008_add_signals_to_scarlett_tables.php',
-        '2026_10_07_120009_add_reconnects_to_scarlett_tables.php',
-        '2026_10_07_120010_add_gauges_to_scarlett_tables.php',
+        '2026_10_07_120008_add_diagnostics_to_scarlett_tables.php',
+        '2026_10_07_120009_add_signals_to_scarlett_tables.php',
+        '2026_10_07_120010_add_reconnects_to_scarlett_tables.php',
+        '2026_10_07_120011_add_gauges_to_scarlett_tables.php',
+        '2026_10_07_120012_add_diagnostics_to_scarlett_tables.php',
     ]);
     $this->artisan('migrate', $this->migrateOptions)->assertSuccessful();
-    expect(upgradeColumnsPresent())->toBeTrue();
+    expect(upgradeColumnsPresent())->toBeTrue()
+        ->and(Schema::hasColumns('scarlett_views', ['decoded_frames_total', 'dropped_frames_total', 'viewer_ref']))->toBeTrue()
+        ->and(Schema::hasIndex('scarlett_views', ['viewer_ref']))->toBeTrue();
 });
 
 it('does not warn when the create migrations carry fixed names too, or no migrations directory exists', function (): void {

@@ -149,6 +149,8 @@ class EloquentBeaconStore implements BeaconStore
         'reconnectDuration' => 'reconnect_ms',
         'dvrTime' => 'dvr_ms',
         'pauseDuration' => 'pause_ms',
+        'decodedFramesTotal' => 'decoded_frames_total',
+        'droppedFramesTotal' => 'dropped_frames_total',
     ];
 
     /**
@@ -251,6 +253,15 @@ class EloquentBeaconStore implements BeaconStore
             'completion_ratio_at',
             'rebuffer_fraction',
             'rebuffer_fraction_at',
+        ],
+    ];
+
+    /** Columns added by the diagnostics upgrade (migration 8), also checked by doctor. */
+    public const DIAGNOSTIC_COLUMNS = [
+        self::VIEWS => [
+            'decoded_frames_total',
+            'dropped_frames_total',
+            'viewer_ref',
         ],
     ];
 
@@ -916,7 +927,42 @@ class EloquentBeaconStore implements BeaconStore
             $columns['ip_address'] = $payload->ip;
         }
 
+        $viewerRef = $this->viewerRef($payload);
+
+        if ($viewerRef !== null) {
+            $columns['viewer_ref'] = $viewerRef;
+        }
+
         return $this->supportedSignals($columns);
+    }
+
+    /**
+     * The host's id for the viewer: the server context value under
+     * beacons.viewer_ref_key, when it is a non-empty string or an integer. Only the
+     * server context counts, never a browser dimension of that name, and a guest
+     * beacon without it leaves the column alone (set once). A published config from
+     * before 0.8.0 has no viewer_ref_key (the beacons array merges one level deep), so
+     * a missing key means the default `user_id`; only an explicit null turns it off.
+     */
+    private function viewerRef(BeaconPayload $payload): ?string
+    {
+        $key = $this->config->get('scarlett-player.beacons.viewer_ref_key', 'user_id');
+
+        if (! is_string($key) || $key === '') {
+            return null;
+        }
+
+        $value = $payload->server[$key] ?? null;
+
+        if (is_int($value)) {
+            return (string) $value;
+        }
+
+        if (! is_string($value) || trim($value) === '') {
+            return null;
+        }
+
+        return mb_substr(trim($value), 0, 191);
     }
 
     /**
@@ -1037,7 +1083,7 @@ class EloquentBeaconStore implements BeaconStore
     }
 
     /**
-     * Only omit upgrade columns (signals, reconnects) that are missing; legacy
+     * Only omit upgrade columns (signals, reconnects, gauges, diagnostics) that are missing; legacy
      * columns keep their rules.
      *
      * @template TValue
@@ -1047,7 +1093,10 @@ class EloquentBeaconStore implements BeaconStore
      */
     private function supportedSignals(array $columns, string $table = self::VIEWS): array
     {
-        $optional = [...self::SIGNAL_COLUMNS[$table], ...self::RECONNECT_COLUMNS[$table], ...(self::GAUGE_COLUMNS[$table] ?? [])];
+        $optional = [
+            ...self::SIGNAL_COLUMNS[$table], ...self::RECONNECT_COLUMNS[$table],
+            ...(self::GAUGE_COLUMNS[$table] ?? []), ...(self::DIAGNOSTIC_COLUMNS[$table] ?? []),
+        ];
 
         return array_filter($columns, fn (string $column): bool => ! in_array($column, $optional, true)
             || isset($this->signalColumns[$table][$column]), ARRAY_FILTER_USE_KEY);

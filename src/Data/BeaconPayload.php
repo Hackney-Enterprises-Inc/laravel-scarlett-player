@@ -70,13 +70,31 @@ final readonly class BeaconPayload
     private array $gaugeNulls; // @phpstan-ignore property.uninitializedReadonly
 
     /**
-     * Written by __serialize(). A serialized payload without it was queued by an
-     * older package, whose classification may have left promoted names in custom.
+     * Written by __serialize(). A serialized payload without it, or with an older
+     * version, was queued by an older package, whose classification may have left
+     * promoted names in custom: none before 0.5.0, version 1 from 0.5.0 to 0.7.x,
+     * version 2 from 0.8.0.
      */
-    private const SERIAL_VERSION = 1;
+    private const SERIAL_VERSION = 2;
+
+    /**
+     * Names promoted since serial version 1 (0.8.0, player 1.25.0), captured from
+     * the custom dimensions of a job queued by 0.5.0 to 0.7.x. `sentAt` is left
+     * out: nothing reads it through knownValue().
+     */
+    private const PROMOTED_SINCE_SERIAL_1 = ['decodedFramesTotal', 'droppedFramesTotal'];
 
     /** Keys every beacon carries. The four ids are required. */
     public const IDENTITY = ['event', 'timestamp', 'viewId', 'sessionId', 'viewerId', 'videoId'];
+
+    /**
+     * Known fields never part of the hash basis: transport metadata that differs
+     * between two deliveries of the same beacon. `sentAt` (player 1.25.0) is the
+     * time the built-in transport dispatched the body, stamped per attempt. Only
+     * the known-typed value is excluded; a `sentAt` of another type stays a custom
+     * dimension and hashes as it always did.
+     */
+    private const HASH_EXCLUDED = ['sentAt'];
 
     /** The gauge keys and marker whose explicit null is remembered ($gaugeNulls). */
     private const GAUGE_NULL_KEYS = ['completionRate', 'rebufferRatio', 'gaugeScale'];
@@ -125,6 +143,9 @@ final readonly class BeaconPayload
         'online',
         'sourceHost',
         'reconnecting',
+        // player 1.25.0
+        'decodedFramesTotal',
+        'droppedFramesTotal',
     ];
 
     /**
@@ -237,6 +258,12 @@ final readonly class BeaconPayload
         'liveLatencyP95' => 'numeric',
         'liveLatencyMax' => 'numeric',
         'lowLatency' => 'boolean',
+        // heartbeat and both viewEnds (player 1.25.0): the view's running frame totals
+        'decodedFramesTotal' => 'numeric',
+        'droppedFramesTotal' => 'numeric',
+        // every beacon from the built-in transport (player 1.25.0): dispatch time,
+        // epoch ms. Raw log only, never hashed (HASH_EXCLUDED).
+        'sentAt' => 'numeric',
     ];
 
     /**
@@ -265,7 +292,7 @@ final readonly class BeaconPayload
         ?string $bodyHash = null,
     ) {
         // No null marker yet: the provenance is attached after construction.
-        $this->bodyHash = $bodyHash ?? sha1((string) json_encode($this->browserKeys([]), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+        $this->bodyHash = $bodyHash ?? sha1((string) json_encode($this->hashBasis(), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
     }
 
     /**
@@ -335,7 +362,7 @@ final readonly class BeaconPayload
             'sessionId' => (string) $data['sessionId'],
             'viewerId' => (string) $data['viewerId'],
             'videoId' => (string) $data['videoId'],
-        ], $context, array_filter(array_diff_key($fields, array_flip(self::LEGACY_HASH_CUSTOM)), fn (mixed $value): bool => $value !== null), $legacyCustom);
+        ], $context, array_filter(array_diff_key($fields, array_flip([...self::LEGACY_HASH_CUSTOM, ...self::HASH_EXCLUDED])), fn (mixed $value): bool => $value !== null), $legacyCustom);
 
         $payload = new self(
             event: (string) $data['event'],
@@ -557,6 +584,25 @@ final readonly class BeaconPayload
     }
 
     /**
+     * The hash basis of a payload built without one: browserKeys() without the
+     * known fields in HASH_EXCLUDED. A custom dimension of that name stays.
+     *
+     * @return array<string, mixed>
+     */
+    private function hashBasis(): array
+    {
+        $basis = $this->browserKeys([]);
+
+        foreach (self::HASH_EXCLUDED as $key) {
+            if (array_key_exists($key, $this->fields) && ! array_key_exists($key, $this->custom)) {
+                unset($basis[$key]);
+            }
+        }
+
+        return $basis;
+    }
+
+    /**
      * An explicit null marker, kept so the raw log tells it from an omitted
      * one: the gauges backfill reads the marker from there. A marker in the
      * custom dimensions (a pipeline may set one) replaces it.
@@ -610,14 +656,27 @@ final readonly class BeaconPayload
 
         $legacy = [];
 
-        if (isset($data['serialVersion'])) {
-            // Written by this version: only a map it captured itself, carried as is.
+        $version = isset($data['serialVersion']) && is_numeric($data['serialVersion']) ? (int) $data['serialVersion'] : null;
+
+        if ($version !== null) {
+            // A map a marked version captured itself, carried as is.
             foreach ((array) ($data['legacyKnown'] ?? []) as $key => $value) {
                 if (is_string($key) && is_scalar($value)) {
                     $legacy[$key] = $value;
                 }
             }
-        } else {
+        }
+
+        if ($version !== null && $version < 2) {
+            // Queued by 0.5.0 to 0.7.x: the names promoted since, left in custom.
+            foreach (self::PROMOTED_SINCE_SERIAL_1 as $key) {
+                $value = $this->custom[$key] ?? null;
+
+                if (! $this->has($key) && ! array_key_exists($key, $legacy) && self::isType($value, self::FIELDS[$key])) {
+                    $legacy[$key] = self::field($value);
+                }
+            }
+        } elseif ($version === null) {
             // Queued by an older package: promoted names it classified as custom.
             foreach (self::LEGACY_HASH_CUSTOM as $key) {
                 $value = $this->custom[$key] ?? null;

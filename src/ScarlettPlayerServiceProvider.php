@@ -10,6 +10,7 @@ use Hei\ScarlettPlayer\Clips\ClipVerifier;
 use Hei\ScarlettPlayer\Commands\BackfillGaugesCommand;
 use Hei\ScarlettPlayer\Commands\BeaconTestCommand;
 use Hei\ScarlettPlayer\Commands\DoctorCommand;
+use Hei\ScarlettPlayer\Commands\InspectViewsCommand;
 use Hei\ScarlettPlayer\Commands\PruneViewsCommand;
 use Hei\ScarlettPlayer\Commands\ReconcileClipsCommand;
 use Hei\ScarlettPlayer\Contracts\BeaconStore;
@@ -216,6 +217,10 @@ class ScarlettPlayerServiceProvider extends ServiceProvider
             __DIR__.'/../database/migrations/0001_01_01_000007_add_gauges_to_scarlett_tables.php' => database_path('migrations/0001_01_01_000007_add_gauges_to_scarlett_tables.php'),
         ], 'scarlett-migrations-gauges');
 
+        $this->publishesMigrations([
+            __DIR__.'/../database/migrations/0001_01_01_000008_add_diagnostics_to_scarlett_tables.php' => database_path('migrations/0001_01_01_000008_add_diagnostics_to_scarlett_tables.php'),
+        ], 'scarlett-migrations-diagnostics');
+
         RateLimiter::for('scarlett-beacons', fn (Request $request): Limit => $this->limitFrom(
             config('scarlett-player.beacons.throttle'),
         )->by((string) $request->ip()));
@@ -229,6 +234,7 @@ class ScarlettPlayerServiceProvider extends ServiceProvider
                 BeaconTestCommand::class,
                 PruneViewsCommand::class,
                 BackfillGaugesCommand::class,
+                InspectViewsCommand::class,
             ]);
         }
     }
@@ -251,6 +257,7 @@ class ScarlettPlayerServiceProvider extends ServiceProvider
             Doctor\Checks\BeaconSignalsColumnsCheck::class,
             Doctor\Checks\BeaconReconnectColumnsCheck::class,
             Doctor\Checks\BeaconGaugeColumnsCheck::class,
+            Doctor\Checks\BeaconDiagnosticColumnsCheck::class,
             Doctor\Checks\BeaconUpgradeMigrationOrderCheck::class,
             BeaconContextCheck::class,
         ];

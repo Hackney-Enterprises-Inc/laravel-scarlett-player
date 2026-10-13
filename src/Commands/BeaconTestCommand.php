@@ -96,9 +96,10 @@ class BeaconTestCommand extends Command
     }
 
     /**
-     * One view in the player 1.24.0 shape: counters on the heartbeat and viewEnd, a
-     * reconnect outage, null bitrates, the viewEnd's gaugeScale marker, and on a live
-     * view `liveEnded`, a null completionRate and dvrTime.
+     * One view in the player 1.25.0 shape: counters and frame totals on the heartbeat
+     * and viewEnd, a reconnect outage, null bitrates, the viewEnd's gaugeScale marker,
+     * `sentAt` on every beacon, and on a live view `liveEnded`, a null completionRate
+     * and dvrTime.
      *
      * @return list<array<string, mixed>>
      */
@@ -126,10 +127,12 @@ class BeaconTestCommand extends Command
             'reconnectCount' => 1, 'reconnectDuration' => 1, 'avgBitrate' => null, 'maxBitrate' => null,
             'qualityChanges' => 0, 'pauseCount' => 0, 'pauseDuration' => 0, 'seekCount' => 0,
             'elementSeekCount' => 0, 'errorCount' => 0, 'warningCount' => 0, 'qoeScore' => 100, 'qoeVersion' => 2,
+            'decodedFramesTotal' => 0, 'droppedFramesTotal' => 0,
             ...($live ? ['dvrTime' => 0] : []),
         ];
 
-        return [
+        // The built-in transport appends its dispatch time last.
+        return array_values(array_map(fn (array $beacon): array => [...$beacon, 'sentAt' => $beacon['timestamp']], [
             ['event' => 'viewStart', 'timestamp' => $timestamp, ...$context],
             // duration is seconds; a live HLS source reports 0, which the store ignores.
             ['event' => 'heartbeat', 'timestamp' => $timestamp + 1, ...$context, ...$metrics(1), 'currentTime' => 0, 'duration' => $live ? 0 : 60],
@@ -137,6 +140,6 @@ class BeaconTestCommand extends Command
             ['event' => 'recovered', 'timestamp' => $timestamp + 3, ...$context, 'duration' => 1, 'reconnectCount' => 1, 'attempt' => 1],
             ['event' => 'viewEnd', 'timestamp' => $timestamp + 4, ...$context, ...$metrics(4), 'startupTime' => null, 'rebufferRatio' => 0,
                 'exitType' => $live ? 'liveEnded' : 'abandoned', 'completionRate' => $live ? null : 0, 'gaugeScale' => 'percent'],
-        ];
+        ]));
     }
 }

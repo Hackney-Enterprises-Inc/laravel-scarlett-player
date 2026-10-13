@@ -201,6 +201,16 @@ return [
          * scarlett_views.server and server_stamps columns.
          */
         'context' => null,
+
+        /**
+         * The server context key copied into the indexed scarlett_views.viewer_ref
+         * column, so support can find a customer's views (scarlett:views:inspect
+         * --ref=). Set once per view from the first beacon whose context carries a
+         * non-empty string or an integer under this key; a guest beacon leaves it
+         * alone. Use your own id for the viewer, never a token. Null turns it off.
+         * Needs the diagnostics migration (scarlett-migrations-diagnostics).
+         */
+        'viewer_ref_key' => env('SCARLETT_BEACON_VIEWER_REF_KEY', 'user_id'),
     ],
 
     /*
@@ -365,12 +375,12 @@ return [
         /**
          * The @scarlett-player/* version whose wire contracts this app targets.
          */
-        'player_version' => env('SCARLETT_PLAYER_VERSION', '1.24.0'),
+        'player_version' => env('SCARLETT_PLAYER_VERSION', '1.25.0'),
 
         /**
          * Where the embed bundle lives, as a template: {cdn_url} and {player_version}
          * are replaced with the keys above. The player CDN serves versioned directories
-         * (v1.24.0/embed.js, an ES module); for a floating version use
+         * (v1.25.0/embed.js, an ES module); for a floating version use
          * '{cdn_url}/latest/embed.js' once the CDN serves /latest/. A path ending in
          * .cjs (the UMD build) is loaded as a classic script, anything else as a module.
          */
@@ -381,7 +391,7 @@ return [
          * heartbeatInterval. Null leaves the player's default (10 s). Each player sends
          * 60 / interval heartbeats a minute against the scarlett-beacons limit
          * (beacons.throttle, 600 a minute per IP by default), so a short interval on a
-         * page with several players needs a higher limit. Module mode only: the 1.24.0 embed
+         * page with several players needs a higher limit. Module mode only: the 1.25.0 embed
          * bundle has no attribute for it.
          */
         'heartbeat_interval' => env('SCARLETT_HEARTBEAT_INTERVAL'),

@@ -1,6 +1,6 @@
 # Pinned player bundle
 
-The browser group runs the published `@scarlett-player/embed` 1.24.0 UMD bundle, the
+The browser group runs the published `@scarlett-player/embed` 1.25.0 UMD bundle, the
 package's default `player.player_version`. Historically, the player repository's
 `packages/embed/dist` holds whatever was last built there, which is not necessarily the
 version this package pins, so the bundle is always taken from npm.
@@ -8,19 +8,19 @@ version this package pins, so the bundle is always taken from npm.
 | Field | Value |
 |---|---|
 | Package | `@scarlett-player/embed` |
-| Version | `1.24.0` |
-| Obtained | `npm pack @scarlett-player/embed@1.24.0`, 2026-10-13 |
-| Tarball | `scarlett-player-embed-1.24.0.tgz`, sha256 `115c20a80f3f59c0d3643d801227894db27f88dd5b2b6ac6af3ff562d4790732` |
-| Tarball integrity (npm) | `sha512-aR1Xwd/QBOq8E+Ffi+76xu+v1sj86tCaQ15eA3j2KWdjOfKqu9VlHXZFL9BICYOvatd8VKN/B8HkR3PpHcKC7Q==` |
-| Tarball shasum (npm, sha1) | `adbdd6fa017ed0e1563fa758c8533f289146a7c7` |
+| Version | `1.25.0` |
+| Obtained | `npm pack @scarlett-player/embed@1.25.0`, 2026-10-13 |
+| Tarball | `scarlett-player-embed-1.25.0.tgz`, sha256 `a63c13124b761a77e1705b4018f080373e2f2eb647221cb7f8dc51c3c42b64d3` |
+| Tarball integrity (npm) | `sha512-SuUTNC8uxXrvAtFgBTtZemo8KoWDgC9J7yBWT/imDSMnCueIcFlngh0EYxv2j4aALfORvxJ6Uq0xwdp+M1vRQA==` |
+| Tarball shasum (npm, sha1) | `e1408408e528998d03eb3e8dc2966643c66c2638` |
 
 | File | From the tarball | sha256 |
 |---|---|---|
-| `1.24.0/embed.umd.cjs` | `package/dist/embed.umd.cjs` (the Full build: video, audio, analytics, playlist, media session, sharing), 825164 bytes | `3a998a0934867e766b04086712dab3e71202db5ad8f0f9b6b15aeb542edd5cfc` |
-| `1.24.0/LICENSE` | `package/LICENSE` (MIT) | `193d8279cea28ab478f59f07dda1c308e8b63de46e17b0ae1888a6840b4ebb47` |
+| `1.25.0/embed.umd.cjs` | `package/dist/embed.umd.cjs` (the Full build: video, audio, analytics, playlist, media session, sharing), 831595 bytes | `7d931ea132223b4994d35a6f622aa0f4958ec5030497cd62a6cf55f84577e337` |
+| `1.25.0/LICENSE` | `package/LICENSE` (MIT) | `193d8279cea28ab478f59f07dda1c308e8b63de46e17b0ae1888a6840b4ebb47` |
 
 The UMD build is self-contained: it loads no chunk at runtime, so no other file from the
-tarball is needed for an mp4 or WebM source. Its analytics module reports `playerVersion` `1.24.0`.
+tarball is needed for an mp4 or WebM source. Its analytics module reports `playerVersion` `1.25.0`.
 
 `embed.umd.cjs` contains two em dashes, both on one line, in the player's own playback stall
 messages (the 1.22.0 copy had the same two; an earlier note here said one). It is kept byte for
@@ -32,7 +32,8 @@ The 1.16.2 copy (sha256 `1339eb0c...85c4c8`, npm integrity
 (sha256 `32e64076...a30093`, npm integrity `sha512-9L5FBBca...Aclo4QA==`) on the repin to
 1.19.1, and the 1.19.1 copy (sha256 `c27bfa8c...71f898d`, npm integrity
 `sha512-jXmb96Pk...WWjQQ==`) on the repin to 1.22.0, and the 1.22.0 copy (sha256 `ec985a3e...5b6bd58`,
-npm integrity `sha512-9C7z2qs4...`) on the repin to 1.24.0; nothing referenced any of them.
+npm integrity `sha512-9C7z2qs4...`) on the repin to 1.24.0, and the 1.24.0 copy (sha256 `3a998a09...2edd5cfc`,
+npm integrity `sha512-aR1Xwd/Q...`) on the repin to 1.25.0; nothing referenced any of them.
 
 `blank.webm` is not from the player. It is the media the test page gives the player, so the
 native provider loads without an error (an error beacon would end the view before the

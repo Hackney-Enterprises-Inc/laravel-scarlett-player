@@ -4,6 +4,29 @@ All notable changes to `hei/laravel-scarlett-player` are documented here. The fo
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-10-13
+
+Upgrading from 0.7: update the package, then `php artisan vendor:publish --tag=scarlett-migrations-diagnostics`, `php artisan migrate` and `php artisan queue:restart`, then move the player to 1.25.0. Fresh installs publish only `scarlett-migrations`. Until the migration runs, ingest keeps working and skips the new columns, and `scarlett:doctor` warns.
+
+### Added
+
+- Ingest for player 1.25.0. `sentAt`, the time the built-in transport sent each beacon (epoch ms), is a known field: kept in the raw event log (`$payload->get('sentAt')`), not a custom dimension on the view row, and left out of the deduplication hash, so two deliveries of one beacon with different dispatch times store once. Only a numeric `sentAt` is excluded; one of another type stays a custom dimension and hashes as before, so beacons from earlier players hash exactly as in 0.7.0. `decodedFramesTotal` and `droppedFramesTotal` (heartbeat and both viewEnds) are known fields stored in the new monotonic view columns `decoded_frames_total` and `dropped_frames_total` (the larger value wins); their hash is the one 0.7.0 computed when it kept them as custom dimensions.
+- `viewer_ref`, the host's own id for the viewer, so support can find a customer's views. It is copied once per view from the server context key named by the new `beacons.viewer_ref_key` config (`SCARLETT_BEACON_VIEWER_REF_KEY`, default `user_id`) and indexed. A published config from before 0.8.0 lacks the key and gets the default; an explicit null turns it off. Only the server context counts, never a browser dimension of that name; a guest beacon leaves the value alone; a non-empty string or an integer is stored, trimmed and cut to 191 characters.
+- Additive migration `0001_01_01_000008_add_diagnostics_to_scarlett_tables.php`: `decoded_frames_total`, `dropped_frames_total` (unsigned big integer), `viewer_ref` (string, 191) and the index `scarlett_views_viewer_ref_index`, all nullable on `scarlett_views`. It follows the established upgrade family: published alone with `--tag=scarlett-migrations-diagnostics` (dated at publish time), idempotent for columns and index, stops with `UpgradeMigrationOrderException` before any change when `scarlett_views` does not exist yet, and `down()` drops only what is present and only when no other recorded copy owns it. Existing rows are not rewritten.
+- `beacon diagnostic columns` doctor check, and the diagnostics suffix in `beacon upgrade migration order`.
+- `scarlett:views:inspect`, a read-only support command: finds views by view id, `--ref` (`viewer_ref`), `--viewer` or `--video`, narrowed by `--since` (`30m`, `24h`, `7d` or a date), newest first (`--limit`, default 5), and prints each view's fields, its errors and its raw beacon timeline (the newest `--events`, default 100, in client order), with each beacon's stored time minus its `sentAt` (network time, the beacons queue wait and the viewer's clock error) and the median per view. `--json` prints the same report as JSON, `[]` when nothing matches. It names `beacons.raw_events_except` entries that hide part of the timeline. Eloquent store only.
+- README: "Player 1.25", "Finding a viewer's views", the publish tag, the doctor row and the `v0.8.0` compatibility row.
+
+### Changed
+
+- Pinned to player 1.25.0: `player.player_version` defaults to `1.25.0` (was `1.24.0`), so embed mode loads the CDN's `v1.25.0/` bundle and its addons as soon as the package deploys, unless the host pins another version. Verified against the published npm 1.25.0 embed, chapters, share, captions and core packages, and the CDN's `v1.25.0/` files (`embed.js`, `embed.umd.cjs`, both addons and `hls.1.25.0.js`, byte-identical to npm). The embed `data-*` names, the `Chapter`/`CaptionSource` shapes, the addon file names and the share snippet are unchanged.
+- Custom stores and `beacons.pipeline` steps: `sentAt`, `decodedFramesTotal` and `droppedFramesTotal` are no longer in `$payload->custom`; read them with `$payload->get()` (or `knownValue()`). The `BeaconStore` contract and `BeaconPayload`'s public shape are unchanged.
+- Queued jobs across the upgrade: `BeaconPayload` serializes with classification version 2. A job queued by 0.5.0 to 0.7.x keeps its queued classification and hash (the frame totals stay in its `custom`), and `knownValue()` captures the frame totals from it, so it still fills the new columns. A 1.25.0 beacon that 0.7.0 stored and that is delivered again after the upgrade hashes differently (0.7.0 hashed its `sentAt`) and is stored a second time.
+- `scarlett:beacon:test` sends the 1.25.0 shape: `sentAt` on every beacon and the frame totals on the heartbeat and viewEnd.
+- Test fixtures moved to 1.25.0: a real wire capture by the player harness (`tests/Fixtures/wire/1.25.0/`; no live seek scenario), the npm 1.25.0 embed bundle for the browser group, and the attribute README, chapters normaliser and share-built iframes from the 1.25.0 packages (unchanged in content from 1.24.0).
+- Readers of player 1.25: `videoStart` waits for a frame to be shown and a picture that freezes without the browser reporting buffering counts as a rebuffer, so `startup_ms`, `rebuffer_count` and `rebuffer_ms` read higher than on 1.24 for the same playback, mostly on iOS Safari. Compare like with like across the upgrade.
+- Readers of player 1.25: a load that hits `loadTimeoutMs` hands off to auto-reconnect, so expect more `reconnecting` and `recovered` beacons and errors with `timedOut`. On live seeks, `seekableStart` / `seekableEnd` arrive as custom dimensions.
+
 ## [0.7.0] - 2026-10-13
 
 ### Changed
