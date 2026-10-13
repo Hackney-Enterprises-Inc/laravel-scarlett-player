@@ -6,7 +6,7 @@ documents; the tests check every emitted name against this copy.
 
 | File | Player | Source | State |
 |---|---|---|---|
-| `1.22.0/README.md` | 1.22.0 | `package/README.md` from `npm pack @scarlett-player/embed@1.22.0` (tarball sha256 `ebdd9981b38eff2e81bfc1eee38ba6cad54572d37956b66f90a3a0248c22bd82`), 2026-10-06 | verbatim, sha256 `e9c2b95e304e43f018055421b37f6e81ba615b12b5f36946b3996aa5987ec553` |
+| `1.24.0/README.md` | 1.24.0 | `package/README.md` from `npm pack @scarlett-player/embed@1.24.0` (tarball sha256 `115c20a80f3f59c0d3643d801227894db27f88dd5b2b6ac6af3ff562d4790732`), 2026-10-13 | verbatim, sha256 `89db9921694610c862c5a096c02fcc957092ead89462d430e2fa33071920d121` |
 
 Re-take it from the published package when the player pin moves.
 
@@ -17,3 +17,9 @@ the names in the 1.19.1 copy (sha256 `88209b66...bcdfc4a`) and the source-derive
 `signals-candidate/README.md` (the 1.20.0 privacy and batch attributes, copied from the
 player working tree on 2026-09-30, source sha256 `53cc5e9f...d4bf00`). Both were removed:
 the published README supersedes the candidate, and no test needs the older set.
+
+Repin to 1.24.0 (2026-10-13): the published 1.24.0 README has the same set of 45 `data-*` names as
+the 1.22.0 copy (sha256 `e9c2b95e...ec553`, removed). Its differences are the `data-keyboard`
+description, a `keyboard` line in the iframe URL parameters, and the keyboard shortcuts section
+(video only, `?`, `C` and `0`-`9` bullets added). None of these changes an attribute name the
+builder writes.

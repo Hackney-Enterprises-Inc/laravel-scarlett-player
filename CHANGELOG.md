@@ -4,6 +4,18 @@ All notable changes to `hei/laravel-scarlett-player` are documented here. The fo
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-10-13
+
+### Changed
+
+- Pinned to player 1.24.0: `player.player_version` defaults to `1.24.0` (was `1.22.0`), so embed mode loads the CDN's `v1.24.0/` bundle and its addons. Verified against the published npm 1.24.0 embed, chapters, share, captions and core packages, the CDN's `v1.24.0/` files (`embed.js`, `embed.umd.cjs`, both addons and `hls.1.24.0.js`, byte-identical to npm) and the 1.24.0 player checkout. No migration and no schema change; 0.7.0 adds no known field.
+- Test fixtures moved to 1.24.0: the browser group runs the npm 1.24.0 embed bundle (`tests/Fixtures/player/1.24.0/`), and the attribute README, the chapters normaliser and the share-built iframes come from 1.24.0 (`tests/Fixtures/embed/*/1.24.0/`). The browser test also asserts the unload `viewEnd` carries `gaugeScale: 'percent'` and stamps both canonical gauges.
+- `scarlett:beacon:test` sends the 1.24.0 shape: `gaugeScale: 'percent'` on both viewEnds, so a test run fills the canonical gauge columns. Its `playerVersion` stays `beacon-test`.
+- Readers of player 1.23 and later: `completionRate` is null when the duration is unknown (it was 0), and `rebufferRatio` is null when its inputs are unusable (a watch time of 0 still sends 0). A null is a stamped unavailable canonical gauge; the legacy `completion_rate` and `rebuffer_ratio` columns skip it and keep their last value.
+- Readers of player 1.23 and later: player-requested `seeking` beacons coalesce to one per second per view (element seeks are unchanged). `seek_count` still counts every seek request, so it stays exact, but there are fewer raw `seeking` rows.
+- Readers of player 1.24: loading a new source after a view ended starts a new view at once, including a view with no `videoStart` (a source that fails before it plays). Count plays with `play_ms > 0` rather than counting rows.
+- Readers of player 1.24: hls.js `mux` errors are retried and, on live, the player reconnects from them, so there are more warning-severity errors and more `reconnecting` and `recovered` beacons.
+
 ## [0.6.0] - 2026-10-09
 
 ### Added

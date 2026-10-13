@@ -17,8 +17,9 @@ use Throwable;
  * through each key path the player uses: the X-API-Key header (fetch) and the api_key
  * query parameter (the unload sendBeacon, which cannot carry a header). Every one must
  * answer 204. The header view is VOD (a 60 second media duration) and ends
- * `abandoned`; the query view is live and ends `liveEnded`. Bitrates are null, as player 1.22.0 sends them until a quality
- * change reports one.
+ * `abandoned`; the query view is live and ends `liveEnded`. Bitrates are null, as the
+ * player sends them until a quality change reports one. Both viewEnds carry
+ * `gaugeScale: 'percent'` (player 1.23.0 and later), so the canonical gauge columns fill.
  *
  * The beacons are real: they are queued and stored like any other, under a view id
  * starting with `scarlett-beacon-test-`. This proves the route, the key and the
@@ -95,9 +96,9 @@ class BeaconTestCommand extends Command
     }
 
     /**
-     * One view in the player 1.22.0 shape: counters on the heartbeat and viewEnd, a
-     * reconnect outage, null bitrates, and on a live view `liveEnded`, a null
-     * completionRate and dvrTime.
+     * One view in the player 1.24.0 shape: counters on the heartbeat and viewEnd, a
+     * reconnect outage, null bitrates, the viewEnd's gaugeScale marker, and on a live
+     * view `liveEnded`, a null completionRate and dvrTime.
      *
      * @return list<array<string, mixed>>
      */
@@ -135,7 +136,7 @@ class BeaconTestCommand extends Command
             ['event' => 'reconnecting', 'timestamp' => $timestamp + 2, ...$context, 'reconnectCount' => 1, 'attempt' => 1],
             ['event' => 'recovered', 'timestamp' => $timestamp + 3, ...$context, 'duration' => 1, 'reconnectCount' => 1, 'attempt' => 1],
             ['event' => 'viewEnd', 'timestamp' => $timestamp + 4, ...$context, ...$metrics(4), 'startupTime' => null, 'rebufferRatio' => 0,
-                'exitType' => $live ? 'liveEnded' : 'abandoned', 'completionRate' => $live ? null : 0],
+                'exitType' => $live ? 'liveEnded' : 'abandoned', 'completionRate' => $live ? null : 0, 'gaugeScale' => 'percent'],
         ];
     }
 }

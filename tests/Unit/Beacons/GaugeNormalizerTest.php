@@ -79,6 +79,14 @@ it('uses the audited registry when the marker is absent', function (): void {
         ->and($reading->reason)->toBe('registry_percent');
 });
 
+it('keeps 1.24.0 unknown when its explicit marker is absent', function (): void {
+    $reading = GaugeNormalizer::normalize(37.5, false, null, 'scarlett-player', '1.24.0');
+
+    expect($reading->available)->toBeFalse()
+        ->and($reading->value)->toBeNull()
+        ->and($reading->reason)->toBe('unknown_scale');
+});
+
 it('leaves the scale unknown for producers or versions outside the registry', function (?string $name, ?string $version): void {
     $reading = GaugeNormalizer::normalize(37.5, false, null, $name, $version);
 

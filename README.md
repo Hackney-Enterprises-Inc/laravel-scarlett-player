@@ -652,6 +652,53 @@ What changes for queries and listeners:
   from a fresh one, and decide whether an error ended its view with
   `$payload->isFatalError()`.
 
+#### Player 1.23 and 1.24
+
+Package 0.7.0 moves the default `player.player_version` to **1.24.0** (from 1.22.0).
+There is no migration and no schema change, and 0.7.0 adds no known field: a host on
+0.6.0 keeps its tables and ingest code. Verified against the published npm 1.24.0
+packages (`@scarlett-player/embed`, `chapters`, `share`, `captions` and `core`) and the
+CDN's `v1.24.0/embed.umd.cjs`, which is byte-identical to the npm build (see
+[Compatibility](#compatibility)).
+
+Upgrade order is the same as for 1.22: update the package, then move the player. Embed
+mode follows `player.player_version`, so the embed page and component load
+`v1.24.0/embed.js` and its addons as soon as the package deploys, unless the host's
+published config or `SCARLETT_PLAYER_VERSION` pins another version. Module mode uses the
+host's own npm dependencies: move every `@scarlett-player/*` package to 1.24.0 together,
+and set `SCARLETT_PLAYER_VERSION=1.24.0` if you pin it. The embed `data-*` names the
+builder writes are unchanged.
+
+What changes on the wire, and what it means for readers:
+
+- **Gauges can be null (1.23.0 and later).** `completionRate` is sent as null when the
+  duration is unknown (earlier players sent 0), and `rebufferRatio` is null when its
+  watch and rebuffer inputs are unusable (a watch time of 0 still sends 0). Both stay
+  bounded to 0..100. In the canonical columns a null is a stamped unavailable
+  measurement: `completion_ratio` is null and `completion_ratio_at` is set, so averages
+  leave it out. The legacy `completion_rate` and `rebuffer_ratio` columns skip a null and
+  keep the last value they received, which is why these gauges should be read from
+  `completion_ratio` and `rebuffer_fraction` (see [Canonical gauges](#canonical-gauges-and-upgrading-from-05)).
+- **Seeks coalesce (1.23.0 and later).** Player-requested seeks send at most one `seeking`
+  beacon per second per view; element seeks are unchanged. `seek_count` still counts every seek request, so it stays exact,
+  but there are fewer raw `seeking` rows than `seek_count`. A seek still held when the
+  view ends can go out through the unload transport.
+- **More views that never played (1.24.0).** Loading a different source after a view has
+  ended starts a new view at once: a new `viewId`, `isLive` sent as null, and the same
+  `video_id` unless the host called `setVideo()`. A source that fails before it plays
+  reports `viewStart`, a fatal `error` and `viewEnd` (`exit_type` `error`) with no
+  `playRequest` or `videoStart`. A view that never played has no `startup_ms` and a
+  `play_ms` of 0, and there are more such rows for the same playback. Count plays with a
+  filter such as `play_ms > 0` rather than counting rows.
+- **Retried media errors (1.24.0).** hls.js `mux` errors are retried, and on a live
+  source the player reconnects from them. Expect more warning-severity errors and more
+  `reconnecting` and `recovered` beacons. The wire `errorCode` stays
+  `MEDIA_DECODE_ERROR`, and `detail.type` is not sent. Decide whether an error ended its
+  view with `PlaybackErrorReported::isFatal()`, as before.
+
+Diagnostics snapshots (1.23) and the core teardown bound (1.24) are not on the wire, so
+they change nothing in the stored data.
+
 #### Canonical gauges and upgrading from 0.5
 
 The viewEnd gauges `completionRate` and `rebufferRatio` reached the legacy columns
@@ -677,7 +724,7 @@ Each gauge is normalized after the host pipeline, from the beacon's own units:
 - Without a marker, only the source-audited producer registry decides. Initially
   `scarlett-player` **1.22.0** is proven percent from an audit of its analytics source
   (it sends no marker); other producers and versions stay unknown until audited.
-  Scarlett Player 1.23.0 sends `gaugeScale: 'percent'` on viewEnd (finite percentages
+  Scarlett Player 1.23.0 and later send `gaugeScale: 'percent'` on viewEnd (finite percentages
   bounded to 0..100, null for unavailable measurements), so it is decided by its marker
   and needs no registry entry; 1.22.0 does neither, so its out-of-range values clamp
   here and its unknown-duration 0 is stored as 0.
@@ -1069,7 +1116,7 @@ php artisan scarlett:views:prune [--days=30]      # --days overrides retention.e
 ```
 
 `scarlett:beacon:test` posts a synthetic view (`viewStart`, `heartbeat`, `reconnecting`,
-`recovered`, `viewEnd`, in the player 1.22 shape with null bitrates) through the header
+`recovered`, `viewEnd`, in the player 1.24 shape with null bitrates and `gaugeScale: 'percent'` on both viewEnds) through the header
 path (a VOD view ending `abandoned`) and again through the query-string path (a live
 view ending `liveEnded`), and fails unless every one is answered `204`. The beacons are real (queued and stored under a view id starting
 `scarlett-beacon-test-`). It proves the route, the key and the body; it does not prove
@@ -1469,7 +1516,7 @@ This table is generated from `Hei\ScarlettPlayer\Player\FeatureMatrix`, the same
 builder enforces (`FeatureMatrix::toMarkdown()`; a test fails if the two differ). A cell
 reading "from player X" is checked against `player.player_version`: below it, asking for that
 feature in embed mode throws `UnsupportedInEmbedMode`, which names the module-mode
-alternative. On the default 1.22.0 (from 1.17.0), embed mode carries clips, chapters and captions; chapters
+alternative. On the default 1.24.0 (from 1.17.0), embed mode carries clips, chapters and captions; chapters
 and clips need the embed's addon files, which the component loads for you.
 
 ### Config builder
@@ -1845,6 +1892,7 @@ falls through to the bound resolver.
 | `v0.4.0` | Default pin 1.19.1; prepared for 1.20.0 signals and QoE v1/v2 ingest | `tests/Fixtures/wire/signals-candidate/`, real browser captures from the local signals source, still labeled 1.19.3 by its package metadata | Structured errors, nullable scores, interval metrics, page context and privacy options. Published 1.20.0 artifact verification and recapture remain pending; npm returned 404 during preparation. Batching remains off and unsupported |
 | `v0.5.0` | 1.22.x, pinned at 1.22.0 (`player.player_version`, was 1.19.1) | `tests/Fixtures/wire/1.22.0-derived/`, derived (recapture owed); the captured 1.19.1 set retained | Verified against the published npm 1.22.0 analytics, embed, chapters, share and captions packages and the CDN `v1.22.0/` files (byte-identical to npm); the browser test runs the npm 1.22.0 embed bundle. The player harness could not capture 1.22.0: three of its own assertions still expect the pre-1.22 unload subset. Heartbeat and unload `viewEnd` carry every counter; `elementSeekCount`, `reconnectCount`, `reconnectDuration`, `dvrTime`; `reconnecting` and `recovered` events; error `networkState`, `readyState`, `online`, `sourceHost`, `reconnecting`; `pause_ms` and heartbeat-only `media_duration`; `liveEnded`; null bitrates and live `completionRate`. Needs the additive `scarlett-migrations-reconnects` migration. `scarlett_view_errors.fatal` now follows severity. `seek_count` coalesces element seek bursts from 1.22. Embed attributes, `Chapter`/`CaptionSource` shapes, addon files and the share snippet are unchanged from 1.19.1 |
 | `v0.6.0` | 1.22.x and 1.23.x, pinned at 1.22.0; ingests the `gaugeScale: 'percent'` marker 1.23.0 adds to viewEnd (kept as a custom dimension) | Unchanged from `v0.5.0` | Additive canonical gauges: `completion_ratio` / `rebuffer_fraction` with independent stamps, normalized to 0..1 from an explicit marker or the source-audited producer registry (scarlett-player 1.22.0 proven percent; magnitude never decides units). Unknown scale, invalid marker and live completion write a stamped null; legacy `completion_rate` / `rebuffer_ratio` keep the received wire values. Needs the additive `scarlett-migrations-gauges` migration on existing hosts; `beacon gauge columns` doctor check; dry-run-first `scarlett:views:backfill-gauges`. Readers must move averages and filters to the canonical columns (see [Canonical gauges](#canonical-gauges-and-upgrading-from-05)) Also carries the never-released 0.5.1 migration fix: the `scarlett-migrations-signals` and `scarlett-migrations-reconnects` copies are dated at publish time, both upgrade migrations are idempotent and resumable, and a copy that sorts before its tables stops with a named error (see [Upgrade migrations](#upgrade-migrations)) |
+| `v0.7.0` | 1.22.x, 1.23.x and 1.24.x, pinned at 1.24.0 (`player.player_version`, was 1.22.0) | `tests/Fixtures/wire/1.24.0/` (captured by the player harness at 1.24.0) and `tests/Fixtures/wire/1.24.0-derived/` (derived, recapture owed) | Verified against the published npm 1.24.0 embed, chapters, share, captions and core packages and the CDN `v1.24.0/` embed bundle (byte-identical to npm); the browser test runs the npm 1.24.0 embed bundle. Nulls for unknown `completionRate` and unusable `rebufferRatio` (1.23), coalesced `seeking` beacons (1.23), a new view on a new source after a view ended, including views that never played (1.24), and retried hls.js `mux` errors with live reconnects (1.24). No migration and no schema change. The embed attribute names, the `Chapter`/`CaptionSource` shapes, the addon file names and the share snippet are unchanged from 1.22.0 |
 
 Player 1.19.3's `rebufferGraceMs: 0` restores immediate rebuffer counting. Its
 `rebufferStart.timestamp` is the send time, not backdated to the first `waiting`;
@@ -1865,12 +1913,12 @@ The 1.19.3 and `1.22.0-derived` beacon fixtures are derived from the analytics s
 and explicitly marked `derived (recapture owed)`; they do not claim a captured transport
 (the 1.22.0 set was re-verified against the published source). The share-built embed
 iframe fixture is also derived: it is generated by the share plugin's own snippet
-builder, taken byte for byte from the published 1.22.0 dist, because the capture harness
-has no share scenario.
+builder, taken byte for byte from the published 1.24.0 dist (its `buildEmbedSnippet()` is
+identical to 1.22.0), because the capture harness has no share scenario.
 
 The embed bundle location follows `player.embed_bundle`, a template defaulting to
 `{cdn_url}/v{player_version}/embed.js`: the player CDN serves one directory per release
-(for example, `v1.22.0/`) and no `/latest/` alias yet, so the embed bundle is always the pinned version.
+(for example, `v1.24.0/`) and no `/latest/` alias yet, so the embed bundle is always the pinned version.
 
 ## Development
 

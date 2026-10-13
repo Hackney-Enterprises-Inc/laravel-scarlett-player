@@ -16,7 +16,7 @@ concurrency:
 jobs:
   pint:
     name: pint
-    runs-on: ubuntu-24.04
+    runs-on: namespace-profile-hackney
     steps:
       - uses: actions/checkout@v5
 
@@ -31,7 +31,7 @@ jobs:
 
   phpstan:
     name: phpstan
-    runs-on: ubuntu-24.04
+    runs-on: namespace-profile-hackney
     steps:
       - uses: actions/checkout@v5
 
@@ -46,7 +46,7 @@ jobs:
 
   em-dashes:
     name: em dashes
-    runs-on: ubuntu-24.04
+    runs-on: namespace-profile-hackney
     steps:
       - uses: actions/checkout@v5
 
@@ -63,7 +63,7 @@ jobs:
 
   tests:
     name: php ${{ matrix.php }} / laravel ${{ matrix.laravel }}
-    runs-on: ubuntu-24.04
+    runs-on: namespace-profile-hackney
     strategy:
       fail-fast: false
       matrix:
@@ -90,6 +90,13 @@ jobs:
           php-version: ${{ matrix.php }}
           coverage: none
 
+      # The initialiser tests run resources/js/init.js through Node harnesses that use
+      # module.registerHooks() (Node 22.15+). Pinned rather than taken from the runner
+      # image, whose Node version is not ours to choose.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+
       - name: pin the framework for this cell
         run: >
           composer require --dev --no-update
@@ -112,7 +119,7 @@ jobs:
   # engines hosts deploy on.
   beacons-databases:
     name: beacons on ${{ matrix.database }}
-    runs-on: ubuntu-24.04
+    runs-on: namespace-profile-hackney
     strategy:
       fail-fast: false
       matrix:
@@ -168,7 +175,7 @@ jobs:
 
   browser:
     name: browser (chromium, tls proxy)
-    runs-on: ubuntu-24.04
+    runs-on: namespace-profile-hackney
     steps:
       - uses: actions/checkout@v5
 
@@ -201,7 +208,7 @@ jobs:
 
   integration:
     name: integration (ffmpeg)
-    runs-on: ubuntu-24.04
+    runs-on: namespace-profile-hackney
     steps:
       - uses: actions/checkout@v5
 
