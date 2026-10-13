@@ -1146,9 +1146,11 @@ php artisan scarlett:views:inspect --viewer=<viewerId> --video=<videoId> --json
 Each matching view (newest first, `--limit`, default 5) prints its fields (player, device,
 startup, rebuffers, reconnects, dropped frames, gauges, the server and custom maps), its
 errors (severity, category, code, HTTP status, source host, message) and its raw beacon
-timeline (`--events`, default 100). For player 1.25 and later the timeline shows each
-beacon's receipt time minus its `sentAt`: network time plus how far the viewer's clock is
-off, with the median per view. The timeline needs `beacons.store_raw_events`; the
+timeline (`--events`, the newest 100 by default). For player 1.25 and later the timeline
+shows each beacon's stored time minus its `sentAt`, with the median per view: network time,
+the wait on the beacons queue (retries included) and how far the viewer's clock is off.
+`received_at` is stamped when the queued job runs, not at the HTTP request, so a backed-up
+queue shows up here as well. The timeline needs `beacons.store_raw_events`; the
 command names any events `beacons.raw_events_except` leaves out (leaving out `heartbeat`
 removes most of a view's timeline). `--since` takes `30m`, `24h`, `7d` or a date and
 filters on when the view was last updated. Read only, and for the Eloquent store only.

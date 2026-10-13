@@ -22,9 +22,11 @@ use Throwable;
  * copied from the server context), by the player's viewerId or by video, and
  * narrow them by when they were last active.
  *
- * The timeline shows each beacon's client time, the server's receive time and,
- * for player 1.25.0 and later, the gap between receipt and the browser's `sentAt`:
- * network time plus how far the viewer's clock is off. Read only; only the tables
+ * The timeline shows each beacon's client time, the time the store wrote it and,
+ * for player 1.25.0 and later, the gap between that and the browser's `sentAt`:
+ * network time, the wait on the beacons queue (retries included) and how far the
+ * viewer's clock is off. received_at is stamped when ProcessBeacon runs, not at the
+ * HTTP request, so a backed-up queue shows here too. Read only; only the tables
  * EloquentBeaconStore writes.
  */
 class InspectViewsCommand extends Command
@@ -114,7 +116,7 @@ class InspectViewsCommand extends Command
         $rows = $query->orderByDesc('updated_at')->orderByDesc('id')->limit($limit)->get()->all();
 
         if ($rows === []) {
-            $this->warn('No views match.');
+            $this->option('json') ? $this->line('[]') : $this->warn('No views match.');
 
             return self::SUCCESS;
         }
@@ -150,14 +152,21 @@ class InspectViewsCommand extends Command
     }
 
     /**
-     * The view's raw events in client order, each with its receive-to-dispatch gap.
+     * The view's newest raw events, in client order (occurred_at, seq, id), each
+     * with its stored-minus-sent gap. Newest, so a long view keeps its viewEnd.
      *
-     * @return list<array{occurred_at: string, received_at: string, skew_ms: int|null, event: string, seq: int|null, payload: array<string, mixed>}>
+     * @return list<array{occurred_at: string, received_at: string, lag_ms: int|null, event: string, seq: int|null, payload: array<string, mixed>}>
      */
     private function timeline(Connection $connection, string $viewId, int $limit): array
     {
-        $rows = $connection->table(EloquentBeaconStore::EVENTS)
-            ->where('view_id', $viewId)->orderBy('occurred_at')->orderBy('id')->limit($limit)->get()->all();
+        $query = $connection->table(EloquentBeaconStore::EVENTS)->where('view_id', $viewId)->orderByDesc('occurred_at');
+
+        // Published older migrations lack seq; order by id alone there.
+        if ($connection->getSchemaBuilder()->hasColumn(EloquentBeaconStore::EVENTS, 'seq')) {
+            $query->orderByDesc('seq');
+        }
+
+        $rows = array_reverse($query->orderByDesc('id')->limit($limit)->get()->all());
 
         return array_values(array_map(function (stdClass $row): array {
             $payload = json_decode((string) $row->payload, true);
@@ -167,7 +176,7 @@ class InspectViewsCommand extends Command
             return [
                 'occurred_at' => (string) $row->occurred_at,
                 'received_at' => (string) $row->received_at,
-                'skew_ms' => is_int($sentAt) || is_float($sentAt) ? $this->milliseconds((string) $row->received_at) - (int) $sentAt : null,
+                'lag_ms' => is_int($sentAt) || is_float($sentAt) ? $this->milliseconds((string) $row->received_at) - (int) $sentAt : null,
                 'event' => (string) $row->event,
                 'seq' => isset($row->seq) && is_numeric($row->seq) ? (int) $row->seq : null,
                 'payload' => $payload,
@@ -177,7 +186,7 @@ class InspectViewsCommand extends Command
 
     /**
      * @param  array<int, stdClass>  $errors
-     * @param  list<array{occurred_at: string, received_at: string, skew_ms: int|null, event: string, seq: int|null, payload: array<string, mixed>}>  $events
+     * @param  list<array{occurred_at: string, received_at: string, lag_ms: int|null, event: string, seq: int|null, payload: array<string, mixed>}>  $events
      * @param  list<string>  $except
      */
     private function printView(stdClass $view, array $errors, array $events, bool $raw, array $except, int $limit): void
@@ -208,7 +217,7 @@ class InspectViewsCommand extends Command
             'completion' => isset($view->completion_ratio) ? round((float) $view->completion_ratio * 100, 1).'%' : null,
             'rebuffer share' => isset($view->rebuffer_fraction) ? round((float) $view->rebuffer_fraction * 100, 2).'%' : null,
             'page' => $view->page_url ?? null,
-            'server' => $view->server,
+            'server' => $view->server ?? null,
             'custom' => $view->custom,
         ];
 
@@ -251,18 +260,20 @@ class InspectViewsCommand extends Command
             return;
         }
 
-        $skews = array_values(array_filter(array_column($events, 'skew_ms'), 'is_int'));
+        $lags = array_values(array_filter(array_column($events, 'lag_ms'), 'is_int'));
 
-        if ($skews !== []) {
-            sort($skews);
-            $this->line('Receipt minus sentAt, median '.$this->signed($skews[intdiv(count($skews), 2)]).' over '.count($skews).' beacons: network time plus how far the viewer\'s clock is behind the server (negative: ahead).');
+        if ($lags !== []) {
+            sort($lags);
+            $middle = intdiv(count($lags), 2);
+            $median = count($lags) % 2 === 1 ? $lags[$middle] : intdiv($lags[$middle - 1] + $lags[$middle], 2);
+            $this->line('Stored minus sentAt, median '.$this->signed($median).' over '.count($lags).' beacons: network time, the beacons queue wait, and how far the viewer\'s clock is behind the server (negative: ahead).');
         }
 
-        $this->line('Timeline'.(count($events) === $limit ? ' (first '.$limit.', raise --events for more)' : ''));
-        $this->table(['Occurred (client)', 'Received (server)', 'Receipt - sentAt', 'Event', 'Seq', 'Detail'], array_map(fn (array $event): array => [
+        $this->line('Timeline'.(count($events) === $limit ? ' (last '.$limit.', raise --events for more)' : ''));
+        $this->table(['Occurred (client)', 'Stored (server)', 'Stored - sentAt', 'Event', 'Seq', 'Detail'], array_map(fn (array $event): array => [
             $event['occurred_at'],
             $event['received_at'],
-            $event['skew_ms'] === null ? '-' : $this->signed($event['skew_ms']),
+            $event['lag_ms'] === null ? '-' : $this->signed($event['lag_ms']),
             $event['event'],
             $event['seq'] ?? '-',
             $this->detail($event['payload']),

@@ -45,7 +45,7 @@ it('shows a viewer\'s views with errors, frame drops and the timeline', function
     $output = Artisan::output();
 
     expect($output)->toContain('View '.Beacons::VIEW, '41 of 410 (10%)', '2 (1.5s)', 'cdn.example.test', 'warning, reconnecting', 'Segment failed', 'exitType=error')
-        ->toContain('Receipt minus sentAt, median +2.500s over 2 beacons')
+        ->toContain('Stored minus sentAt, median +2.450s over 2 beacons')
         ->toContain('| +2.400s')
         ->not->toContain('other-view');
 });
@@ -67,9 +67,9 @@ it('finds views by view id, viewer id and video, and prints JSON', function (): 
         ->and($report[0]['view']['server'])->toBe(['user_id' => 4182])
         ->and($report[0]['errors'])->toHaveCount(1)
         ->and(array_column($report[0]['events'], 'event'))->toBe(['viewStart', 'heartbeat', 'error', 'viewEnd'])
-        ->and($report[0]['events'][0]['skew_ms'])->toBe(2400)
-        ->and($report[0]['events'][1]['skew_ms'])->toBe(2500)
-        ->and($report[0]['events'][2]['skew_ms'])->toBeNull();
+        ->and($report[0]['events'][0]['lag_ms'])->toBe(2400)
+        ->and($report[0]['events'][1]['lag_ms'])->toBe(2500)
+        ->and($report[0]['events'][2]['lag_ms'])->toBeNull();
 });
 
 it('limits views and timeline rows, and filters by recent activity', function (): void {
@@ -93,6 +93,37 @@ it('limits views and timeline rows, and filters by recent activity', function ()
 it('says when nothing matches', function (): void {
     $this->artisan('scarlett:views:inspect', ['--ref' => 'nobody'])
         ->expectsOutputToContain('No views match.')
+        ->assertSuccessful();
+
+    expect(Artisan::call('scarlett:views:inspect', ['--ref' => 'nobody', '--json' => true]))->toBe(0)
+        ->and(json_decode(Artisan::output(), true))->toBe([]);
+});
+
+it('keeps the newest events when --events cuts the timeline, in client order', function (): void {
+    Artisan::call('scarlett:views:inspect', ['view' => Beacons::VIEW, '--events' => '1', '--json' => true]);
+    expect(array_column(json_decode(Artisan::output(), true)[0]['events'], 'event'))->toBe(['viewEnd']);
+
+    $this->artisan('scarlett:views:inspect', ['view' => Beacons::VIEW, '--events' => '1'])
+        ->expectsOutputToContain('Timeline (last 1, raise --events for more)')
+        ->assertSuccessful();
+});
+
+it('orders events stamped in the same millisecond by seq, not arrival', function (): void {
+    $occurred = DB::table('scarlett_beacon_events')->where('view_id', Beacons::VIEW)->where('event', 'viewEnd')->value('occurred_at');
+    DB::table('scarlett_beacon_events')->where('view_id', Beacons::VIEW)->where('event', 'heartbeat')->update(['occurred_at' => $occurred]);
+    DB::table('scarlett_beacon_events')->where('view_id', Beacons::VIEW)->where('event', 'viewEnd')->update(['seq' => 1]);
+    DB::table('scarlett_beacon_events')->where('view_id', Beacons::VIEW)->where('event', 'heartbeat')->update(['seq' => 2]);
+
+    Artisan::call('scarlett:views:inspect', ['view' => Beacons::VIEW, '--json' => true]);
+    expect(array_slice(array_column(json_decode(Artisan::output(), true)[0]['events'], 'event'), -2))->toBe(['viewEnd', 'heartbeat']);
+});
+
+it('prints a view from a table without the server columns', function (): void {
+    DB::statement('alter table scarlett_views drop column server_stamps');
+    DB::statement('alter table scarlett_views drop column server');
+
+    $this->artisan('scarlett:views:inspect', ['view' => Beacons::VIEW])
+        ->expectsOutputToContain('View '.Beacons::VIEW)
         ->assertSuccessful();
 });
 
