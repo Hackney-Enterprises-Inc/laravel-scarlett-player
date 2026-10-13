@@ -110,8 +110,8 @@ jobs:
       # --fail-on-empty-test-suite is explicit rather than inherited: a run that
       # matches no tests is a broken invocation, not a green build. The browser and
       # integration groups skip here (no SCARLETT_BROWSER, no ffmpeg); their own
-      # jobs below run them.
-      - run: vendor/bin/pest --ci --fail-on-empty-test-suite
+      # jobs below run them. Every worker gets its own in-memory sqlite database.
+      - run: vendor/bin/pest --ci --fail-on-empty-test-suite --parallel
 
   # The beacon store's merge SQL has dialect-specific parts (JSON merge, assignment
   # order, datetime formats), and the matrix above runs SQLite only. This runs the
@@ -139,7 +139,10 @@ jobs:
           MYSQL_DATABASE: scarlett
         ports:
           - 3306:3306
+        # Data on tmpfs: every test migrates and rolls back, and on disk the fsync
+        # behind each DDL statement is most of this job's time.
         options: >-
+          --tmpfs /var/lib/mysql
           --health-cmd="mysql -uroot -pscarlett -h127.0.0.1 -e 'select 1'"
           --health-interval=5s --health-timeout=5s --health-retries=20
       postgres:
@@ -150,6 +153,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
+          --tmpfs /var/lib/postgresql/data
           --health-cmd="pg_isready -U postgres"
           --health-interval=5s --health-timeout=5s --health-retries=20
 
@@ -164,7 +168,9 @@ jobs:
 
       - uses: ramsey/composer-install@v4
 
-      - run: vendor/bin/pest --ci --fail-on-empty-test-suite tests/Feature/Beacons tests/Feature/Media/HasScarlettClipsTest.php
+      # The `database` group (tests/Pest.php). Under --parallel each worker migrates
+      # its own database, DB_DATABASE suffixed with its TEST_TOKEN (TestCase creates it).
+      - run: vendor/bin/pest --ci --fail-on-empty-test-suite --parallel --group=database
         env:
           DB_CONNECTION: ${{ matrix.database }}
           DB_HOST: 127.0.0.1

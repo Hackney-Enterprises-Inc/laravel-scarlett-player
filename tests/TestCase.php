@@ -6,6 +6,8 @@ namespace Hei\ScarlettPlayer\Tests;
 
 use Hei\ScarlettPlayer\Facades\ScarlettPlayer;
 use Hei\ScarlettPlayer\ScarlettPlayerServiceProvider;
+use Illuminate\Foundation\Application;
+use Illuminate\Support\ConfigurationUrlParser;
 use Illuminate\Support\Facades\Http;
 use Orchestra\Testbench\TestCase as Orchestra;
 
@@ -22,6 +24,13 @@ abstract class TestCase extends Orchestra
      * @var array<string, mixed>
      */
     protected array $scarlettConfig = [];
+
+    /**
+     * Worker databases this process has already created, by name.
+     *
+     * @var array<string, true>
+     */
+    private static array $workerDatabases = [];
 
     protected function setUp(): void
     {
@@ -56,6 +65,72 @@ abstract class TestCase extends Orchestra
         foreach ($this->scarlettConfig as $key => $value) {
             $app['config']->set("scarlett-player.{$key}", $value);
         }
+
+        $this->useWorkerDatabase($app);
+    }
+
+    /**
+     * Under `pest --parallel` against MySQL or Postgres, point this worker at its own
+     * database (DB_DATABASE suffixed with paratest's TEST_TOKEN), created on first use,
+     * so two workers never migrate one schema at once. In-memory sqlite needs nothing:
+     * each process already has its own.
+     *
+     * A DB_URL wins over the separate keys when Laravel connects, so the connection is
+     * resolved through the same parser first and written back without its URL; otherwise
+     * the URL's database would put every worker back on the shared one.
+     *
+     * @param  Application  $app
+     */
+    private function useWorkerDatabase($app): void
+    {
+        $token = getenv('TEST_TOKEN');
+
+        if ($token === false || $token === '') {
+            return;
+        }
+
+        $key = 'database.connections.'.$app['config']->get('database.default');
+
+        /** @var array<string, mixed> $connection */
+        $connection = (new ConfigurationUrlParser)->parseConfiguration((array) $app['config']->get($key));
+        $driver = $connection['driver'] ?? null;
+
+        if (! in_array($driver, ['mysql', 'mariadb', 'pgsql'], true)) {
+            return;
+        }
+
+        $base = (string) ($connection['database'] ?? '');
+        $name = "{$base}_{$token}";
+
+        if (! isset(self::$workerDatabases[$name])) {
+            $pdo = new \PDO(
+                sprintf(
+                    '%s:host=%s;port=%s;dbname=%s',
+                    $driver === 'pgsql' ? 'pgsql' : 'mysql',
+                    (string) ($connection['host'] ?? ''),
+                    (string) ($connection['port'] ?? ''),
+                    $base,
+                ),
+                (string) ($connection['username'] ?? ''),
+                (string) ($connection['password'] ?? ''),
+                [\PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION],
+            );
+
+            if ($driver === 'pgsql') {
+                $exists = $pdo->prepare('select 1 from pg_database where datname = ?');
+                $exists->execute([$name]);
+
+                if ($exists->fetchColumn() === false) {
+                    $pdo->exec('create database "'.$name.'"');
+                }
+            } else {
+                $pdo->exec('create database if not exists `'.$name.'`');
+            }
+
+            self::$workerDatabases[$name] = true;
+        }
+
+        $app['config']->set($key, ['database' => $name] + $connection);
     }
 
     /**

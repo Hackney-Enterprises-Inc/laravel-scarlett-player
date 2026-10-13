@@ -172,7 +172,7 @@ jobs:
       # The three gates, the same ones a local hand-off runs.
       - run: vendor/bin/pint --test
       - run: vendor/bin/phpstan analyse --no-progress --memory-limit=1G
-      - run: vendor/bin/pest --ci --fail-on-empty-test-suite
+      - run: vendor/bin/pest --ci --fail-on-empty-test-suite --parallel
 
       # The FIRST heading, anchored and escaped: `## [0.1.0]` must not match
       # `## [0.1.0-rc6]`, and a version with a section further down is not the
