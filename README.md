@@ -1936,6 +1936,8 @@ The suite runs on in-memory SQLite. The `database` group (the beacon store and t
 relation) also runs on MySQL and Postgres in CI, because the merge SQL is dialect-specific.
 To run it locally, point the `DB_*` variables at a server and pass `--parallel`: each worker
 then creates and uses its own database, `DB_DATABASE` suffixed with its worker number.
+The worker databases are kept between runs and reused, so two runs at the same time against
+one server need different `DB_DATABASE` values.
 
 ```bash
 DB_CONNECTION=mysql DB_HOST=127.0.0.1 DB_PORT=3306 DB_DATABASE=scarlett DB_USERNAME=root DB_PASSWORD=secret \
