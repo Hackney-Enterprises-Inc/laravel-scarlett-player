@@ -14,8 +14,8 @@ use Throwable;
 /**
  * Every copy of an upgrade migration must sort after the migrations that create the
  * tables it alters, or a fresh `migrate` fails. The signals and reconnects upgrades
- * alter scarlett_views and scarlett_view_errors; the gauges upgrade only
- * scarlett_views, so it may sort before the errors create. A fixed 0001_01_01_00000{5,6} name
+ * alter scarlett_views and scarlett_view_errors; the gauges and diagnostics upgrades
+ * only scarlett_views, so they may sort before the errors create. A fixed 0001_01_01_00000{5,6} name
  * from 0.4.x/0.5.0 next to dated creates sorts first, and so does a dated copy
  * published in the same second as the full folder. The migrator orders every
  * registered path plus the default directory together by file name; so does this.
@@ -31,6 +31,7 @@ class BeaconUpgradeMigrationOrderCheck implements Check
         '_add_signals_to_scarlett_tables' => ['scarlett-migrations-signals', [self::VIEWS, self::ERRORS]],
         '_add_reconnects_to_scarlett_tables' => ['scarlett-migrations-reconnects', [self::VIEWS, self::ERRORS]],
         '_add_gauges_to_scarlett_tables' => ['scarlett-migrations-gauges', [self::VIEWS]],
+        '_add_diagnostics_to_scarlett_tables' => ['scarlett-migrations-diagnostics', [self::VIEWS]],
     ];
 
     public function __construct(private readonly Container $container) {}
@@ -73,7 +74,7 @@ class BeaconUpgradeMigrationOrderCheck implements Check
         }
 
         if ($misplaced !== []) {
-            return CheckResult::warn(implode('; ', $misplaced).'. A fresh migrate runs it before the table exists and stops. A database that already ran it is fine. Delete the copy if another copy sorts after the creates (a full scarlett-migrations publish from 0.4.0 contains the signals upgrade, from 0.5.0 the reconnects one, from 0.6.0 the gauges one); otherwise delete a fixed 0001_01_01_ name and publish its tag again, or rename a dated copy to sort after the create migrations.');
+            return CheckResult::warn(implode('; ', $misplaced).'. A fresh migrate runs it before the table exists and stops. A database that already ran it is fine. Delete the copy if another copy sorts after the creates (a full scarlett-migrations publish from 0.4.0 contains the signals upgrade, from 0.5.0 the reconnects one, from 0.6.0 the gauges one, from 0.8.0 the diagnostics one); otherwise delete a fixed 0001_01_01_ name and publish its tag again, or rename a dated copy to sort after the create migrations.');
         }
 
         return CheckResult::pass('every scarlett upgrade migration sorts after the create migrations');

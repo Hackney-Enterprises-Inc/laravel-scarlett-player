@@ -120,14 +120,15 @@ migration below. See
 | `scarlett-migrations-signals` | Only the additive signals migration, for upgrades from 0.3 |
 | `scarlett-migrations-reconnects` | Only the additive player 1.22 migration (reconnects, element seeks, DVR time, error context), for upgrades from 0.4 |
 | `scarlett-migrations-gauges` | Only the additive canonical gauges migration (`completion_ratio`, `rebuffer_fraction` with stamps), for upgrades from 0.5 |
+| `scarlett-migrations-diagnostics` | Only the additive diagnostics migration (`decoded_frames_total`, `dropped_frames_total`, indexed `viewer_ref`), for upgrades from 0.7 |
 | `scarlett-views` | The embed page and Blade component views, to `resources/views/vendor/scarlett` |
 | `scarlett-js` | The JS initialiser, to `resources/js/vendor/scarlett-player/init.js` |
 
 ### Upgrade migrations
 
 A fresh installation publishes **only** `scarlett-migrations`: from 0.4.0 that folder
-contains the signals upgrade, from 0.5.0 the player 1.22 upgrade and from 0.6.0 the
-canonical gauges upgrade, in order. The upgrade tags are for hosts that installed
+contains the signals upgrade, from 0.5.0 the player 1.22 upgrade, from 0.6.0 the
+canonical gauges upgrade and from 0.8.0 the diagnostics upgrade, in order. The upgrade tags are for hosts that installed
 before that upgrade existed. Each publishes
 one migration, dated at publish time, so it sorts after create migrations published
 earlier and a fresh `migrate` (a new environment, a test database) creates the tables
@@ -143,8 +144,8 @@ older string form) has it off and gets the file under its `0001_01_01_...` name:
 `'migrations' => ['table' => 'migrations', 'update_date_on_publish' => true]` before
 publishing, or write your own dated migration (below).
 
-All three upgrade migrations are idempotent from 0.6.0. A column that already exists is left
-alone, so publishing a tag twice (each publish adds another dated copy), a database that
+All four upgrade migrations are idempotent (the first three from 0.6.0, the diagnostics one
+from its first release). A column or index that already exists is left alone, so publishing a tag twice (each publish adds another dated copy), a database that
 already ran an earlier copy, or a host that added the columns itself all migrate as a
 no-op. The signals migration adds `qoe_version` first, on its own, and marks existing
 scores as QoE v1 straight after, so the backfill runs in the run that adds the column.
@@ -153,7 +154,8 @@ rerun that finds `qoe_version` as the only signals column cannot tell whether th
 backfill finished, so it marks scored rows still without a version as v1 again. Rows that
 already carry a version are never changed. Rolling a copy back drops its columns only when no other copy of the
 same upgrade (a migration whose name ends `_add_signals_to_scarlett_tables`,
-`_add_reconnects_to_scarlett_tables` or `_add_gauges_to_scarlett_tables`) is still recorded as run.
+`_add_reconnects_to_scarlett_tables`, `_add_gauges_to_scarlett_tables` or
+`_add_diagnostics_to_scarlett_tables`) is still recorded as run.
 
 **Published with 0.4.x or 0.5.0?** Those tags wrote the fixed names
 `0001_01_01_000005_add_signals_to_scarlett_tables.php` and
@@ -182,7 +184,7 @@ order and there is nothing to repair.
 column lists from the upgrade sections below (every column nullable; `*_at` columns are
 `dateTime` with precision 3) and skip the tags. Name the file with the package's suffix
 (`..._add_signals_to_scarlett_tables.php`, `..._add_reconnects_to_scarlett_tables.php`,
-`..._add_gauges_to_scarlett_tables.php`) if a published copy may also run, so a rollback of that copy keeps your columns.
+`..._add_gauges_to_scarlett_tables.php`, `..._add_diagnostics_to_scarlett_tables.php`) if a published copy may also run, so a rollback of that copy keeps your columns.
 
 ### Routes
 
@@ -423,9 +425,9 @@ merged per field, never per event:
 
 | Class | Columns | Rule |
 |---|---|---|
-| Set-once | identity and environment except `is_live`, `started_at`, `first_frame_at`, `ended_at`, `exit_type` | the first beacon to arrive with a value keeps it; a second `viewEnd` cannot move `ended_at` |
+| Set-once | identity and environment except `is_live`, `started_at`, `first_frame_at`, `ended_at`, `exit_type`; `viewer_ref` (0.8.0, from the server context) | the first beacon to arrive with a value keeps it; a second `viewEnd` cannot move `ended_at` |
 | True wins | `is_live` | any beacon with `isLive: true` sets it and nothing clears it; `false` only fills an empty column. A live `viewStart` fires before the player has read the playlist and says `false` (from player 1.18 it sends `null`, treated as absent), and a live stream that becomes a replay in the same session stays live |
-| Monotonic | `watch_ms`, `play_ms`, `rebuffer_ms`, `rebuffer_count`, `seek_count`, `pause_count`, `quality_changes`, `error_count`, `max_bitrate`, `startup_ms`, `warning_count`, `element_seek_count`, `reconnect_count`, `reconnect_ms`, `dvr_ms`, `pause_ms` | the larger value wins, whatever the order |
+| Monotonic | `watch_ms`, `play_ms`, `rebuffer_ms`, `rebuffer_count`, `seek_count`, `pause_count`, `quality_changes`, `error_count`, `max_bitrate`, `startup_ms`, `warning_count`, `element_seek_count`, `reconnect_count`, `reconnect_ms`, `dvr_ms`, `pause_ms`, `decoded_frames_total`, `dropped_frames_total` | the larger value wins, whatever the order |
 | Latest by timestamp | `qoe_score`, `avg_bitrate`, `rebuffer_ratio`, `completion_rate`, `current_position`, `media_duration`, the live latency summary | written when the beacon is at least as new as the one that wrote that column (a `*_at` stamp per column); `metrics_at` is the newest |
 | Canonical gauges | `completion_ratio`, `rebuffer_fraction` (0.6.0) | the normalized 0..1 measurement of `completionRate` / `rebufferRatio`, each with its own stamp: written when the stamp is absent or the beacon is at least as new as the stamp, even when the stored value is null (a processed unavailable measurement is never refilled by an older numeric). Once `is_live` is true, `completion_ratio` stays null whatever arrives |
 | Fill if absent | every column | a key absent from the beacon, or null, never touches its column: a null `avgBitrate` leaves the last known one |
@@ -698,6 +700,67 @@ What changes on the wire, and what it means for readers:
 
 Diagnostics snapshots (1.23) and the core teardown bound (1.24) are not on the wire, so
 they change nothing in the stored data.
+
+#### Player 1.25
+
+Package 0.8.0 moves the default `player.player_version` to **1.25.0** (from 1.24.0) and
+adds one additive migration, the diagnostics upgrade (frame totals and `viewer_ref`, see
+[Finding a viewer's views](#finding-a-viewers-views)). Verified against the published npm 1.25.0
+packages (`@scarlett-player/embed`, `chapters`, `share`, `captions` and `core`) and the
+CDN's `v1.25.0/` files (`embed.js`, `embed.umd.cjs`, both addons and `hls.1.25.0.js`),
+which are byte-identical to the npm build. The embed `data-*` names, the
+`Chapter`/`CaptionSource` shapes and the share snippet are unchanged from 1.24.
+
+What changes on the wire, and what it means for readers:
+
+- **`sentAt` on every beacon.** The built-in transport appends the time it sent the body
+  (epoch ms), stamped per attempt. 0.8.0 knows the field: it is kept in the raw event log
+  but is not a custom dimension, so it no longer lands in the view's `custom` map, and it
+  is left out of the deduplication hash, so two deliveries of one beacon with different
+  dispatch times still store once. Comparing it with `received_at` in the raw log tells
+  you whether a viewer's clock was wrong. A `sentAt` that is not a number (a host's own
+  dimension) stays a custom dimension and hashes as before. A custom transport sends none.
+- **Frame totals.** Heartbeats and both viewEnds carry `decodedFramesTotal` and
+  `droppedFramesTotal`, the view's running totals beside the per-interval
+  `decodedFrames`/`droppedFrames`. 0.8.0 stores them in the monotonic view columns
+  `decoded_frames_total` and `dropped_frames_total` (the larger value wins), not in
+  `custom`; their deduplication hash is the one 0.7.0 computed when it kept them as custom
+  dimensions. A high dropped share with no rebuffering points to the device's decoder
+  rather than the network:
+
+  ```sql
+  SELECT view_id, viewer_ref, dropped_frames_total, decoded_frames_total
+  FROM scarlett_views
+  WHERE decoded_frames_total > 0
+    AND dropped_frames_total > decoded_frames_total * 0.05
+    AND COALESCE(rebuffer_count, 0) = 0;
+  ```
+- **Live seek window.** A `seeking` beacon on a live view carries `seekableStart` and
+  `seekableEnd` (seconds), kept as custom dimensions and in the raw log.
+- **Startup and rebuffers read higher, mostly on iOS Safari.** `videoStart` now waits
+  for a frame to be shown, and a picture that freezes without the browser reporting
+  buffering counts as a rebuffer, so `startup_ms`, `rebuffer_count` and `rebuffer_ms`
+  rise against 1.24 for the same playback. Compare like with like across the upgrade.
+- **Load timeouts reconnect.** A load that hits `loadTimeoutMs` hands off to
+  auto-reconnect, even before the stream is known to be live, so expect more
+  `reconnecting` and `recovered` beacons and errors with `timedOut` set.
+
+Batching stays unsupported: the batch envelope's `sentAt` changes nothing here.
+
+Upgrade order for an existing host: update the package, publish only the diagnostics
+upgrade, migrate, restart queue workers, then move the player. Until the migration runs,
+ingest skips the new columns (the raw log keeps the values) and the
+`beacon diagnostic columns` doctor check warns.
+
+```bash
+php artisan vendor:publish --tag=scarlett-migrations-diagnostics
+php artisan migrate
+php artisan queue:restart
+```
+
+Columns, all nullable on `scarlett_views`: `decoded_frames_total` and
+`dropped_frames_total` (unsigned big integer), `viewer_ref` (string, 191) with the index
+`scarlett_views_viewer_ref_index`. Existing rows are not rewritten.
 
 #### Canonical gauges and upgrading from 0.5
 
@@ -1045,6 +1108,51 @@ limited to this purpose (`$user->createToken('beacons', ['beacons'], now()->addH
 The unload `viewEnd` goes out through `sendBeacon`, which carries no headers, so it is
 always a guest; a guest beacon's `null` never deletes the `user_id` the view already has.
 
+#### Finding a viewer's views
+
+Support hears "my stream broke last night", not a view id. Tag every view with your own
+id for the viewer in the server context (the recipes above), and 0.8.0 copies it into
+the indexed `scarlett_views.viewer_ref` column:
+
+```php
+// config/scarlett-player.php
+'beacons' => [
+    'context' => App\Analytics\ScarlettBeaconContext::class,
+    // The context key copied into viewer_ref; null turns it off.
+    'viewer_ref_key' => env('SCARLETT_BEACON_VIEWER_REF_KEY', 'user_id'),
+],
+```
+
+A published config from before 0.8.0 has no `viewer_ref_key` (Laravel merges the
+`beacons` array one level deep), and a missing key means the default `user_id`; set it
+to `null` explicitly to turn it off.
+
+`viewer_ref` is set once per view, from the first beacon whose server context carries a
+non-empty string or an integer under that key (trimmed, cut to 191 characters). A guest
+beacon leaves it alone, so a view that starts signed out picks it up from the first
+signed-in beacon. A browser custom dimension of the same name is never used. Return your
+own id, never a token or an email you would not want in an analytics table. It needs the
+diagnostics upgrade (`--tag=scarlett-migrations-diagnostics`); without it the value stays
+in the `server` column only.
+
+Then look a customer up:
+
+```bash
+php artisan scarlett:views:inspect --ref=4182 --since=24h
+php artisan scarlett:views:inspect 1791915129315-900kizszm   # one view by id
+php artisan scarlett:views:inspect --viewer=<viewerId> --video=<videoId> --json
+```
+
+Each matching view (newest first, `--limit`, default 5) prints its fields (player, device,
+startup, rebuffers, reconnects, dropped frames, gauges, the server and custom maps), its
+errors (severity, category, code, HTTP status, source host, message) and its raw beacon
+timeline (`--events`, default 100). For player 1.25 and later the timeline shows each
+beacon's receipt time minus its `sentAt`: network time plus how far the viewer's clock is
+off, with the median per view. The timeline needs `beacons.store_raw_events`; the
+command names any events `beacons.raw_events_except` leaves out (leaving out `heartbeat`
+removes most of a view's timeline). `--since` takes `30m`, `24h`, `7d` or a date and
+filters on when the view was last updated. Read only, and for the Eloquent store only.
+
 ### Your own store
 
 `beacons.store` takes `eloquent`, `null` (accept and discard), or the class name of your
@@ -1113,10 +1221,14 @@ The last three come from `EloquentBeaconStore`; a host store fires its own.
 ```bash
 php artisan scarlett:beacon:test [--url=https://app.example.com/api/scarlett/beacons]
 php artisan scarlett:views:prune [--days=30]      # --days overrides retention.events
+php artisan scarlett:views:inspect [view] [--ref=] [--viewer=] [--video=] [--since=] [--limit=5] [--events=100] [--json]
 ```
 
+`scarlett:views:inspect` prints a viewer's views with their errors and beacon timeline,
+for support (see [Finding a viewer's views](#finding-a-viewers-views)).
+
 `scarlett:beacon:test` posts a synthetic view (`viewStart`, `heartbeat`, `reconnecting`,
-`recovered`, `viewEnd`, in the player 1.24 shape with null bitrates and `gaugeScale: 'percent'` on both viewEnds) through the header
+`recovered`, `viewEnd`, in the player 1.25 shape with null bitrates, `sentAt` on every beacon, frame totals and `gaugeScale: 'percent'` on both viewEnds) through the header
 path (a VOD view ending `abandoned`) and again through the query-string path (a live
 view ending `liveEnded`), and fails unless every one is answered `204`. The beacons are real (queued and stored under a view id starting
 `scarlett-beacon-test-`). It proves the route, the key and the body; it does not prove
@@ -1125,8 +1237,8 @@ browser CORS.
 `scarlett:doctor` adds, for beacons: the key, the store binding, the route, the CORS
 recipe, the beacon queue (warns when it shares a queue with clips), the IP column,
 server-side context, the raw-log `seq` column, the signals, player 1.22
-(`beacon reconnect columns`) and canonical gauges (`beacon gauge columns`) upgrade
-columns, and any upgrade migration copy, in any
+(`beacon reconnect columns`), canonical gauges (`beacon gauge columns`) and diagnostics
+(`beacon diagnostic columns`) upgrade columns, and any upgrade migration copy, in any
 registered migration path, that sorts before the create migrations it needs
 (`beacon upgrade migration order`, see [Upgrade migrations](#upgrade-migrations)).
 
@@ -1516,7 +1628,7 @@ This table is generated from `Hei\ScarlettPlayer\Player\FeatureMatrix`, the same
 builder enforces (`FeatureMatrix::toMarkdown()`; a test fails if the two differ). A cell
 reading "from player X" is checked against `player.player_version`: below it, asking for that
 feature in embed mode throws `UnsupportedInEmbedMode`, which names the module-mode
-alternative. On the default 1.24.0 (from 1.17.0), embed mode carries clips, chapters and captions; chapters
+alternative. On the default 1.25.0 (from 1.17.0), embed mode carries clips, chapters and captions; chapters
 and clips need the embed's addon files, which the component loads for you.
 
 ### Config builder
@@ -1845,6 +1957,7 @@ Prints one row per check and exits non-zero when any check fails (warnings alone
 | embed domains | an `embed.allowed_domains` entry is not a host name (fail; otherwise every embed page request fails) |
 | beacon ip column | `beacons.store_ip` is on but `scarlett_views.ip_address` does not exist, because it is created only when `store_ip` was on at migrate time (fail); the table is missing or cannot be inspected (warn) |
 | beacon signals columns | missing signal columns on views/errors (warn); passes with the complete schema or a custom store; use the signals-only upgrade tag and restart workers |
+| beacon diagnostic columns | missing `decoded_frames_total`, `dropped_frames_total` or `viewer_ref` on views (warn); passes with the complete schema or a custom store; publish `--tag=scarlett-migrations-diagnostics`, migrate and restart workers |
 | beacon seq column | raw-event storage is on but `scarlett_beacon_events.seq` is missing, or the table cannot be inspected (warn); passes when the column exists or `beacons.store_raw_events` is off |
 | beacon context | `beacons.context` is set but is not a class implementing `ResolvesBeaconContext`, or `scarlett_views.server` does not exist, on a table migrated by 0.1 (fail); the table is missing or cannot be inspected (warn) |
 | beacon route | `routes.beacons` is on but `scarlett.beacons.store` is not registered, e.g. a stale route cache (fail); the route is registered while `beacons.enabled` is off (warn) |
@@ -1893,6 +2006,7 @@ falls through to the bound resolver.
 | `v0.5.0` | 1.22.x, pinned at 1.22.0 (`player.player_version`, was 1.19.1) | `tests/Fixtures/wire/1.22.0-derived/`, derived (recapture owed); the captured 1.19.1 set retained | Verified against the published npm 1.22.0 analytics, embed, chapters, share and captions packages and the CDN `v1.22.0/` files (byte-identical to npm); the browser test runs the npm 1.22.0 embed bundle. The player harness could not capture 1.22.0: three of its own assertions still expect the pre-1.22 unload subset. Heartbeat and unload `viewEnd` carry every counter; `elementSeekCount`, `reconnectCount`, `reconnectDuration`, `dvrTime`; `reconnecting` and `recovered` events; error `networkState`, `readyState`, `online`, `sourceHost`, `reconnecting`; `pause_ms` and heartbeat-only `media_duration`; `liveEnded`; null bitrates and live `completionRate`. Needs the additive `scarlett-migrations-reconnects` migration. `scarlett_view_errors.fatal` now follows severity. `seek_count` coalesces element seek bursts from 1.22. Embed attributes, `Chapter`/`CaptionSource` shapes, addon files and the share snippet are unchanged from 1.19.1 |
 | `v0.6.0` | 1.22.x and 1.23.x, pinned at 1.22.0; ingests the `gaugeScale: 'percent'` marker 1.23.0 adds to viewEnd (kept as a custom dimension) | Unchanged from `v0.5.0` | Additive canonical gauges: `completion_ratio` / `rebuffer_fraction` with independent stamps, normalized to 0..1 from an explicit marker or the source-audited producer registry (scarlett-player 1.22.0 proven percent; magnitude never decides units). Unknown scale, invalid marker and live completion write a stamped null; legacy `completion_rate` / `rebuffer_ratio` keep the received wire values. Needs the additive `scarlett-migrations-gauges` migration on existing hosts; `beacon gauge columns` doctor check; dry-run-first `scarlett:views:backfill-gauges`. Readers must move averages and filters to the canonical columns (see [Canonical gauges](#canonical-gauges-and-upgrading-from-05)) Also carries the never-released 0.5.1 migration fix: the `scarlett-migrations-signals` and `scarlett-migrations-reconnects` copies are dated at publish time, both upgrade migrations are idempotent and resumable, and a copy that sorts before its tables stops with a named error (see [Upgrade migrations](#upgrade-migrations)) |
 | `v0.7.0` | 1.22.x, 1.23.x and 1.24.x, pinned at 1.24.0 (`player.player_version`, was 1.22.0) | `tests/Fixtures/wire/1.24.0/` (captured by the player harness at 1.24.0) and `tests/Fixtures/wire/1.24.0-derived/` (derived, recapture owed) | Verified against the published npm 1.24.0 embed, chapters, share, captions and core packages and the CDN `v1.24.0/` embed bundle (byte-identical to npm); the browser test runs the npm 1.24.0 embed bundle. Nulls for unknown `completionRate` and unusable `rebufferRatio` (1.23), coalesced `seeking` beacons (1.23), a new view on a new source after a view ended, including views that never played (1.24), and retried hls.js `mux` errors with live reconnects (1.24). No migration and no schema change. The embed attribute names, the `Chapter`/`CaptionSource` shapes, the addon file names and the share snippet are unchanged from 1.22.0 |
+| `v0.8.0` | 1.22.x through 1.25.x, pinned at 1.25.0 (`player.player_version`, was 1.24.0) | `tests/Fixtures/wire/1.25.0/` (captured by the player harness at 1.25.0) | Verified against the published npm 1.25.0 embed, chapters, share, captions and core packages and the CDN `v1.25.0/` files (byte-identical to npm); the browser test runs the npm 1.25.0 embed bundle. `sentAt` is a known field, kept in the raw log and left out of `custom` and the deduplication hash; the live seek window is a custom dimension. Startup and rebuffer readings rise against 1.24 (frame-based `videoStart`, frozen-picture rebuffers), and load timeouts reconnect. Additive diagnostics migration (`scarlett-migrations-diagnostics`): monotonic `decoded_frames_total` / `dropped_frames_total` and the indexed `viewer_ref`, copied from the server context (`beacons.viewer_ref_key`); `scarlett:views:inspect` for support lookups. The embed attribute names, the `Chapter`/`CaptionSource` shapes, the addon file names and the share snippet are unchanged from 1.24.0 |
 
 Player 1.19.3's `rebufferGraceMs: 0` restores immediate rebuffer counting. Its
 `rebufferStart.timestamp` is the send time, not backdated to the first `waiting`;
@@ -1913,12 +2027,12 @@ The 1.19.3 and `1.22.0-derived` beacon fixtures are derived from the analytics s
 and explicitly marked `derived (recapture owed)`; they do not claim a captured transport
 (the 1.22.0 set was re-verified against the published source). The share-built embed
 iframe fixture is also derived: it is generated by the share plugin's own snippet
-builder, taken byte for byte from the published 1.24.0 dist (its `buildEmbedSnippet()` is
+builder, taken byte for byte from the published 1.25.0 dist (its `buildEmbedSnippet()` is
 identical to 1.22.0), because the capture harness has no share scenario.
 
 The embed bundle location follows `player.embed_bundle`, a template defaulting to
 `{cdn_url}/v{player_version}/embed.js`: the player CDN serves one directory per release
-(for example, `v1.24.0/`) and no `/latest/` alias yet, so the embed bundle is always the pinned version.
+(for example, `v1.25.0/`) and no `/latest/` alias yet, so the embed bundle is always the pinned version.
 
 ## Development
 

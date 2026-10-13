@@ -65,7 +65,7 @@ final class GaugeNormalizer
      *   viewEndMetrics() from the pinned npm 1.22.0 bundle and against the
      *   derived 1.22.0 wire fixtures (completionRate 37.5); out-of-range
      *   values clamp here with a `_clamped` reason.
-     * - scarlett-player 1.23.0 and later: captured 1.24.0 fixtures verify that
+     * - scarlett-player 1.23.0 and later: captured 1.24.0 and 1.25.0 fixtures verify that
      *   every viewEnd carries `gaugeScale: percent`. These versions are
      *   normalized by their explicit marker and deliberately have no registry
      *   entry, since a registry entry would mask a marker removed by a host

@@ -2,7 +2,7 @@
 
 | File | Player | Source | State |
 |---|---|---|---|
-| `1.24.0/normalise.mjs` | 1.24.0 | `normaliseChapters()` lifted verbatim from `@scarlett-player/chapters@1.24.0` `dist/index.js` (npm, sha256 `1742715cf7789f245f8fd6d8f14402ee6a78659c5bdbcaa758e673a885169ac5`; tarball sha256 `e61a02e3024e3d6dc6d8b65304809080a5080e2c7ca4e38139a9c241bd7b9ab4`), 2026-10-13 | shipped code, verbatim; only the export and the CLI wrapper are added |
+| `1.25.0/normalise.mjs` | 1.25.0 | `normaliseChapters()` lifted verbatim from `@scarlett-player/chapters@1.25.0` `dist/index.js` (npm, sha256 `a760eb5ad0eeb00b06637b1eb9188cb36d1d720364b06cccd6607ed4b83e9bde`; tarball sha256 `ec8f5eb17aa6a00242df000278fb24f188984defbe9724f2883afba1b5bfd500`), 2026-10-13 | shipped code, verbatim; only the export and the CLI wrapper are added |
 
 It is the player's own rule for chapter ends: an explicit `endTime` greater than `time` is
 honoured (clamped to the next chapter's start), otherwise the chapter runs to the next
@@ -34,3 +34,9 @@ Re-lifted for 1.24.0: the function is byte-identical to the 1.22.0 one (compared
 changed, and the 1.22.0 copy was removed. The `Chapter` interface in `@scarlett-player/core@1.24.0`
 (`dist/types/state.d.ts`) and `CaptionSource` in `@scarlett-player/captions@1.24.0`
 (`dist/index.d.ts`) are byte-identical to 1.22.0.
+
+Re-lifted for 1.25.0: the function is byte-identical to the 1.24.0 one (compared as text, the
+1.24.0 `dist/index.js` sha256 `1742715c...169ac5`); only the version in the file's header comment
+changed, and the 1.24.0 copy was removed. The `Chapter` interface in `@scarlett-player/core@1.25.0`
+(`dist/types/state.d.ts`) and `CaptionSource` in `@scarlett-player/captions@1.25.0`
+(`dist/index.d.ts`) are byte-identical to 1.24.0.

@@ -100,7 +100,7 @@ it('replaces custom dimensions and the address without touching anything else', 
         ->and($payload->custom)->toBe(['email' => 'viewer@example.com']);
 });
 
-it('knows every key the analytics plugin sends through player 1.22.0', function (): void {
+it('knows every key the analytics plugin sends through player 1.25.0', function (): void {
     // index.ts sendBeacon()/sendUnloadBeacon() base keys, then every data object
     // the plugin passes (heartbeat, videoStart, rebufferEnd, pause, rebufferStart,
     // seeking, error, qualityChange, both viewEnd variants, the latency summary).
@@ -121,6 +121,9 @@ it('knows every key the analytics plugin sends through player 1.22.0', function 
         // 1.22.0: cumulative counters, reconnecting/recovered and error context
         'elementSeekCount', 'reconnectCount', 'reconnectDuration', 'dvrTime', 'attempt', 'delayMs',
         'elapsedMs', 'longOutage', 'networkState', 'readyState', 'online', 'sourceHost', 'reconnecting',
+        // 1.25.0: the transport's dispatch time and the view's frame totals. The live
+        // seekable window stays a custom dimension, merged on the view row.
+        'sentAt', 'decodedFramesTotal', 'droppedFramesTotal',
     ];
 
     expect(array_keys([...BeaconPayload::CONTEXT, ...BeaconPayload::FIELDS]))->toEqualCanonicalizing($shipped);
@@ -577,4 +580,55 @@ describe('player 1.22.0 fields', function (): void {
         'legacy fatal' => ['error', ['fatal' => true], true, false],
         'not an error' => ['viewEnd', ['fatal' => true, 'reconnecting' => true], false, false],
     ]);
+});
+
+describe('player 1.25.0 fields', function (): void {
+    it('keeps a numeric sentAt as a field, out of the custom dimensions and the hash', function (): void {
+        $with = Beacons::payload('heartbeat', 0, ['tenant' => 'a', 'watchTime' => 9, 'decodedFramesTotal' => 30, 'sentAt' => Beacons::T0 + 4]);
+        $without = Beacons::payload('heartbeat', 0, ['tenant' => 'a', 'watchTime' => 9, 'decodedFramesTotal' => 30]);
+
+        expect($with->get('sentAt'))->toBe(Beacons::T0 + 4)
+            ->and($with->custom)->toBe(['tenant' => 'a'])
+            ->and($with->toArray())->toHaveKey('sentAt', Beacons::T0 + 4)
+            ->and($with->bodyHash)->toBe($without->bodyHash)
+            ->and(unserialize(serialize($with))->bodyHash)->toBe($without->bodyHash);
+    });
+
+    it('leaves sentAt out of the hash of a payload built without one', function (): void {
+        $identity = ['heartbeat', Beacons::T0, Beacons::VIEW, 'session-1', 'viewer-1', 'video-1'];
+
+        expect((new BeaconPayload(...$identity, fields: ['watchTime' => 9, 'sentAt' => Beacons::T0 + 4]))->bodyHash)
+            ->toBe((new BeaconPayload(...$identity, fields: ['watchTime' => 9]))->bodyHash);
+    });
+
+    it('keeps a sentAt of another type as a hashed custom dimension, as before 1.25.0', function (): void {
+        $body = Beacons::body('heartbeat', 0, ['watchTime' => 9, 'sentAt' => 'host']);
+        $payload = BeaconPayload::fromArray($body);
+        $legacyBody = array_replace(
+            array_intersect_key($body, array_flip(BeaconPayload::IDENTITY)),
+            array_intersect_key($body, BeaconPayload::CONTEXT),
+            ['watchTime' => 9, 'sentAt' => 'host'],
+        );
+
+        expect($payload->has('sentAt'))->toBeFalse()
+            ->and($payload->custom)->toBe(['sentAt' => 'host'])
+            ->and($payload->bodyHash)->toBe(sha1(json_encode($legacyBody, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)));
+    });
+});
+
+it('preserves the 0.7.0 hash for the promoted 1.25.0 frame totals', function (): void {
+    // 0.7.0 classified the totals as custom, in received order, beside the host's dimensions.
+    $body = Beacons::body('heartbeat', 0, ['tenant' => 'a', 'decodedFramesTotal' => 396, 'watchTime' => 9, 'droppedFramesTotal' => 4, 'other' => 1]);
+    $legacyBody = array_replace(
+        array_intersect_key($body, array_flip(BeaconPayload::IDENTITY)),
+        array_intersect_key($body, BeaconPayload::CONTEXT),
+        ['watchTime' => 9],
+        ['tenant' => 'a', 'decodedFramesTotal' => 396, 'droppedFramesTotal' => 4, 'other' => 1],
+    );
+    $payload = BeaconPayload::fromArray($body);
+
+    expect($payload->get('decodedFramesTotal'))->toBe(396)
+        ->and($payload->get('droppedFramesTotal'))->toBe(4)
+        ->and($payload->custom)->toBe(['tenant' => 'a', 'other' => 1])
+        ->and($payload->bodyHash)->toBe(sha1(json_encode($legacyBody, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)));
 });

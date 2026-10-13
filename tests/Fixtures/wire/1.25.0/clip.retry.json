@@ -1,0 +1,52 @@
+{
+  "fixture": {
+    "player": "1.25.0",
+    "capturedAt": "2026-10-13T18:12:09.217Z",
+    "harness": "scripts/capture-wire-fixtures.mjs",
+    "chromium": "151.0.7922.34",
+    "node": "v24.20.0",
+    "event": "clip",
+    "transport": "fetch",
+    "variant": "retry",
+    "scenario": "clip",
+    "status": 202,
+    "receivedAt": "2026-10-13T18:12:44.697Z"
+  },
+  "request": {
+    "method": "POST",
+    "path": "/api/scarlett/clips",
+    "query": {},
+    "headers": {
+      "sec-ch-ua-platform": "\"macOS\"",
+      "x-csrf-token": "wire-csrf-token",
+      "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.7922.34 Safari/537.36",
+      "sec-ch-ua": "\"Not=A?Brand\";v=\"99\", \"HeadlessChrome\";v=\"151\", \"Chromium\";v=\"151\"",
+      "content-type": "application/json",
+      "sec-ch-ua-mobile": "?0",
+      "accept": "*/*",
+      "origin": "http://127.0.0.1:50228",
+      "sec-fetch-site": "same-origin",
+      "sec-fetch-mode": "cors",
+      "sec-fetch-dest": "empty",
+      "referer": "http://127.0.0.1:50228/scripts/wire-capture/index.html?beacon=https%3A%2F%2F127.0.0.1%3A50227&src=%2F__wire%2Fmaster.m3u8&video=vod",
+      "accept-encoding": "gzip, deflate, br, zstd"
+    },
+    "body": {
+      "startTime": 10,
+      "endTime": 25,
+      "duration": 15,
+      "mediaId": "wire-fixture-vod",
+      "clientRequestId": "163207f5-7dc4-442f-b3f2-078fcf565303",
+      "title": "The knockout",
+      "isLive": false,
+      "seekableStart": null,
+      "seekableEnd": null,
+      "startDate": null,
+      "endDate": null,
+      "capturedAt": "2026-10-13T18:12:44.696Z"
+    }
+  },
+  "response": {
+    "status": 202
+  }
+}

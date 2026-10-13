@@ -6,7 +6,7 @@ documents; the tests check every emitted name against this copy.
 
 | File | Player | Source | State |
 |---|---|---|---|
-| `1.24.0/README.md` | 1.24.0 | `package/README.md` from `npm pack @scarlett-player/embed@1.24.0` (tarball sha256 `115c20a80f3f59c0d3643d801227894db27f88dd5b2b6ac6af3ff562d4790732`), 2026-10-13 | verbatim, sha256 `89db9921694610c862c5a096c02fcc957092ead89462d430e2fa33071920d121` |
+| `1.25.0/README.md` | 1.25.0 | `package/README.md` from `npm pack @scarlett-player/embed@1.25.0` (tarball sha256 `a63c13124b761a77e1705b4018f080373e2f2eb647221cb7f8dc51c3c42b64d3`), 2026-10-13 | verbatim, sha256 `89db9921694610c862c5a096c02fcc957092ead89462d430e2fa33071920d121` |
 
 Re-take it from the published package when the player pin moves.
 
@@ -23,3 +23,6 @@ the 1.22.0 copy (sha256 `e9c2b95e...ec553`, removed). Its differences are the `d
 description, a `keyboard` line in the iframe URL parameters, and the keyboard shortcuts section
 (video only, `?`, `C` and `0`-`9` bullets added). None of these changes an attribute name the
 builder writes.
+
+Repin to 1.25.0 (2026-10-13): the published 1.25.0 README is byte-identical to the 1.24.0 copy
+(same sha256), so the directory was renamed and the file kept.
