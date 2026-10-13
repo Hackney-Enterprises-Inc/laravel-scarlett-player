@@ -1925,10 +1925,21 @@ The embed bundle location follows `player.embed_bundle`, a template defaulting t
 ```bash
 composer install
 vendor/bin/pest                                  # all groups; browser and integration skip without their tools
+vendor/bin/pest --parallel                       # the same, one process per core
 SCARLETT_BROWSER=1 vendor/bin/pest --group=browser
 vendor/bin/pest --group=integration              # needs ffmpeg and ffprobe on PATH
 composer lint                                    # pint --test
 composer analyse                                 # phpstan level 8
+```
+
+The suite runs on in-memory SQLite. The `database` group (the beacon store and the clips
+relation) also runs on MySQL and Postgres in CI, because the merge SQL is dialect-specific.
+To run it locally, point the `DB_*` variables at a server and pass `--parallel`: each worker
+then creates and uses its own database, `DB_DATABASE` suffixed with its worker number.
+
+```bash
+DB_CONNECTION=mysql DB_HOST=127.0.0.1 DB_PORT=3306 DB_DATABASE=scarlett DB_USERNAME=root DB_PASSWORD=secret \
+    vendor/bin/pest --parallel --group=database
 ```
 
 ### Browser tests

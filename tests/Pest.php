@@ -23,6 +23,13 @@ if (getenv('SCARLETT_BROWSER') !== '1') {
 pest()->extends(TestCase::class)->group('unit')->in('Unit');
 pest()->extends(TestCase::class)->group('feature')->in('Feature');
 
+/*
+ * The tests the `beacons on mysql/pgsql` CI jobs run against a server database: the
+ * beacon store's merge SQL is dialect-specific, and the matrix runs sqlite only. A
+ * group rather than paths because `--parallel` takes one path at most.
+ */
+pest()->group('database')->in('Feature/Beacons', 'Feature/Media/HasScarlettClipsTest.php');
+
 pest()->extends(TestCase::class)->group('browser')
     ->beforeEach(function (): void {
         if (getenv('SCARLETT_BROWSER') !== '1') {
