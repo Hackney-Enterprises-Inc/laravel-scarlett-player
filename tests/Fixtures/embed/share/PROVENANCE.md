@@ -2,7 +2,7 @@
 
 | File | Player | Source | State |
 |---|---|---|---|
-| `1.25.0/iframes.json` | 1.25.0 | `buildEmbedSnippet()` lifted verbatim from `@scarlett-player/share@1.25.0` `dist/index.js` (npm, sha256 `db222fee031e4f39696f2549770f1af076ce429afc489565b3401254c66117f1`; tarball sha256 `c2442c28d23b6e699a258f15ffe99c0efeeb11b60c4e27e742905af79cb4756b`), run in Node by `build-iframes.mjs` on 2026-10-13 | derived from the published 1.25.0 dist, byte for byte; not a browser capture (the capture harness has no share scenario) |
+| `1.26.0/iframes.json` | 1.26.0 | `buildEmbedSnippet()` lifted verbatim from `@scarlett-player/share@1.26.0` `dist/index.js` (npm, sha256 `e03d200c60236e47e1cf9fa31fd9e1271e3ea2245098f962a2682bc06076f868`; tarball sha256 `9199ee2c69dc6c8590ec61692682daf182d3af992869254cd26ef5e02cff50cd`), run in Node by `build-iframes.mjs` on 2026-11-02 | derived from the published 1.25.0 dist, byte for byte; not a browser capture (the capture harness has no share scenario) |
 
 The shipped function is the transport here: it is the code that appends `startTime`
 (floored, VOD only) and `shareUrl` with `URL.searchParams` to the embed base URL. What a
@@ -36,4 +36,9 @@ copy was removed.
 Rebuilt for 1.25.0: `buildEmbedSnippet()` is byte-identical to the 1.24.0 function (`dist/index.js`
 sha256 `6b429af3...fe296d8`, compared as text), and `build-iframes.mjs` regenerated the two cases
 identical to the 1.24.0 ones; only `_about` and `playerVersion` in the file changed, and the 1.24.0
+copy was removed.
+
+Rebuilt for 1.26.0: `buildEmbedSnippet()` is byte-identical to the 1.25.0 function (`dist/index.js`
+sha256 `db222fee...117f1`, compared as text), and `build-iframes.mjs` regenerated the two cases
+identical to the 1.25.0 ones; only `_about` and `playerVersion` in the file changed, and the 1.25.0
 copy was removed.

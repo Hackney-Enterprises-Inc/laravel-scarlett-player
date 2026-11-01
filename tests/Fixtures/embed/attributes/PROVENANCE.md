@@ -6,7 +6,7 @@ documents; the tests check every emitted name against this copy.
 
 | File | Player | Source | State |
 |---|---|---|---|
-| `1.25.0/README.md` | 1.25.0 | `package/README.md` from `npm pack @scarlett-player/embed@1.25.0` (tarball sha256 `a63c13124b761a77e1705b4018f080373e2f2eb647221cb7f8dc51c3c42b64d3`), 2026-10-13 | verbatim, sha256 `89db9921694610c862c5a096c02fcc957092ead89462d430e2fa33071920d121` |
+| `1.26.0/README.md` | 1.26.0 | `package/README.md` from `npm pack @scarlett-player/embed@1.26.0` (tarball sha256 `3e69054efaea614b1f52034d0a1a611180a066a0fa7ff2dff7ff46c25e8566c9`), 2026-11-02 | verbatim, sha256 `89db9921694610c862c5a096c02fcc957092ead89462d430e2fa33071920d121` |
 
 Re-take it from the published package when the player pin moves.
 
@@ -25,4 +25,7 @@ description, a `keyboard` line in the iframe URL parameters, and the keyboard sh
 builder writes.
 
 Repin to 1.25.0 (2026-10-13): the published 1.25.0 README is byte-identical to the 1.24.0 copy
+(same sha256), so the directory was renamed and the file kept.
+
+Repin to 1.26.0 (2026-11-02): the published 1.26.0 README is byte-identical to the 1.25.0 copy
 (same sha256), so the directory was renamed and the file kept.
