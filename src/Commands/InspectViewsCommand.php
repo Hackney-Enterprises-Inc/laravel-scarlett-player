@@ -24,10 +24,11 @@ use Throwable;
  *
  * The timeline shows each beacon's client time, the time the store wrote it and,
  * for player 1.25.0 and later, the gap between that and the browser's `sentAt`:
- * network time, the wait on the beacons queue (retries included) and how far the
- * viewer's clock is off. received_at is stamped when ProcessBeacon runs, not at the
- * HTTP request, so a backed-up queue shows here too. Read only; only the tables
- * EloquentBeaconStore writes.
+ * network time plus how far the viewer's clock is off. Since 0.9.0 received_at is
+ * the HTTP request time and the occurred_at column is already corrected by that
+ * gap, so this is the correction that was applied; rows stored by 0.8.0 and earlier
+ * carry the queue wait in it as well. Read only; only the tables EloquentBeaconStore
+ * writes.
  */
 class InspectViewsCommand extends Command
 {
@@ -266,7 +267,7 @@ class InspectViewsCommand extends Command
             sort($lags);
             $middle = intdiv(count($lags), 2);
             $median = count($lags) % 2 === 1 ? $lags[$middle] : intdiv($lags[$middle - 1] + $lags[$middle], 2);
-            $this->line('Stored minus sentAt, median '.$this->signed($median).' over '.count($lags).' beacons: network time, the beacons queue wait, and how far the viewer\'s clock is behind the server (negative: ahead).');
+            $this->line('Stored minus sentAt, median '.$this->signed($median).' over '.count($lags).' beacons: network time plus how far the viewer\'s clock is behind the server (negative: ahead). Rows stored before 0.9.0 include the beacons queue wait too.');
         }
 
         $this->line('Timeline'.(count($events) === $limit ? ' (last '.$limit.', raise --events for more)' : ''));

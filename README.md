@@ -121,6 +121,7 @@ migration below. See
 | `scarlett-migrations-reconnects` | Only the additive player 1.22 migration (reconnects, element seeks, DVR time, error context), for upgrades from 0.4 |
 | `scarlett-migrations-gauges` | Only the additive canonical gauges migration (`completion_ratio`, `rebuffer_fraction` with stamps), for upgrades from 0.5 |
 | `scarlett-migrations-diagnostics` | Only the additive diagnostics migration (`decoded_frames_total`, `dropped_frames_total`, indexed `viewer_ref`), for upgrades from 0.7 |
+| `scarlett-migrations-clock` | Only the additive clock-skew migration (`clock_offset_ms`, `clock_source`, `client_occurred_at`), for upgrades from 0.8 |
 | `scarlett-views` | The embed page and Blade component views, to `resources/views/vendor/scarlett` |
 | `scarlett-js` | The JS initialiser, to `resources/js/vendor/scarlett-player/init.js` |
 
@@ -128,7 +129,7 @@ migration below. See
 
 A fresh installation publishes **only** `scarlett-migrations`: from 0.4.0 that folder
 contains the signals upgrade, from 0.5.0 the player 1.22 upgrade, from 0.6.0 the
-canonical gauges upgrade and from 0.8.0 the diagnostics upgrade, in order. The upgrade tags are for hosts that installed
+canonical gauges upgrade, from 0.8.0 the diagnostics upgrade and from 0.9.0 the clock-skew upgrade, in order. The upgrade tags are for hosts that installed
 before that upgrade existed. Each publishes
 one migration, dated at publish time, so it sorts after create migrations published
 earlier and a fresh `migrate` (a new environment, a test database) creates the tables
@@ -418,6 +419,34 @@ php artisan migrate
 | `scarlett_views` | one per `viewId`, merged from every beacon of that view | `retention.views` days since its last update |
 | `scarlett_beacon_events` | every beacon as received, while `store_raw_events` is on (about 90% heartbeats), except the event names in `raw_events_except` | `retention.events` days since received |
 | `scarlett_view_errors` | one per `error` beacon, with its `video_id` | with its view |
+
+#### Clock-skew correction (0.9.0)
+
+Viewers' clocks are wrong by seconds to minutes, so a beacon's `timestamp` cannot be
+compared with the server's. Player 1.25 sends `sentAt`, the time the transport dispatched
+the body on the viewer's clock. 0.9.0 stamps the moment the request arrives, takes the
+difference as that beacon's offset (the clock error plus network time, usually a few
+tens of milliseconds), and adds it to the beacon's own `timestamp`. Every `*_at` column
+(`started_at`, `first_frame_at`, `ended_at`, `last_event_at`, every `*_at` stamp, and
+`occurred_at` on events and errors) is stored on the server clock. `received_at` is the
+request time, no longer the time the queued job ran.
+
+- The correction is made per beacon from that beacon alone, so delivery order, retries and
+  queue wait do not change it, and two beacons of one view can carry different offsets.
+- A beacon without a numeric `sentAt` (a player before 1.25, a custom transport) or one
+  queued by 0.8.0 is stored as received, unchanged. A `sentAt` more than
+  `beacons.max_clock_offset` seconds (default 86400, null or 0 turns the correction off)
+  from the receipt time is not trusted either: stored as received, tagged `rejected`.
+- What was changed is kept: `client_occurred_at` (the viewer's own time) and
+  `clock_offset_ms` on `scarlett_beacon_events` and `scarlett_view_errors`, and
+  `clock_offset_ms` plus `clock_source` (`sentAt`, `none` or `rejected`) on
+  `scarlett_views`, written once by the beacon that creates the row.
+- The event key, the per-key custom and server stamps and the deduplication hash stay on
+  the viewer's raw clock: they identify a beacon, they are not times.
+- Existing rows are not rewritten (`sentAt` was never stored). A view in flight when you
+  upgrade has raw stamps from before and corrected ones after.
+- Until the migration runs, ingest keeps correcting the stamps and skips the new columns,
+  and `scarlett:doctor` warns.
 
 Beacons arrive duplicated and out of order by design (keepalive fetch and `sendBeacon`
 guarantee no order, a bfcache restore re-sends, a queue redelivers), so the view row is
@@ -1147,10 +1176,10 @@ Each matching view (newest first, `--limit`, default 5) prints its fields (playe
 startup, rebuffers, reconnects, dropped frames, gauges, the server and custom maps), its
 errors (severity, category, code, HTTP status, source host, message) and its raw beacon
 timeline (`--events`, the newest 100 by default). For player 1.25 and later the timeline
-shows each beacon's stored time minus its `sentAt`, with the median per view: network time,
-the wait on the beacons queue (retries included) and how far the viewer's clock is off.
-`received_at` is stamped when the queued job runs, not at the HTTP request, so a backed-up
-queue shows up here as well. The timeline needs `beacons.store_raw_events`; the
+shows each beacon's stored time minus its `sentAt`, with the median per view: network time
+plus how far the viewer's clock is off, which is the correction 0.9.0 applied. Rows stored
+by 0.8.0 or earlier include the beacons queue wait as well, because `received_at` was the
+time the queued job ran. The timeline needs `beacons.store_raw_events`; the
 command names any events `beacons.raw_events_except` leaves out (leaving out `heartbeat`
 removes most of a view's timeline). `--since` takes `30m`, `24h`, `7d` or a date and
 filters on when the view was last updated. Read only, and for the Eloquent store only.
@@ -1959,6 +1988,7 @@ Prints one row per check and exits non-zero when any check fails (warnings alone
 | embed domains | an `embed.allowed_domains` entry is not a host name (fail; otherwise every embed page request fails) |
 | beacon ip column | `beacons.store_ip` is on but `scarlett_views.ip_address` does not exist, because it is created only when `store_ip` was on at migrate time (fail); the table is missing or cannot be inspected (warn) |
 | beacon signals columns | missing signal columns on views/errors (warn); passes with the complete schema or a custom store; use the signals-only upgrade tag and restart workers |
+| beacon clock columns | missing `clock_offset_ms` or `clock_source` on views, or `client_occurred_at` or `clock_offset_ms` on events or errors (warn); passes with the complete schema or a custom store; publish `--tag=scarlett-migrations-clock`, migrate and restart workers |
 | beacon diagnostic columns | missing `decoded_frames_total`, `dropped_frames_total` or `viewer_ref` on views (warn); passes with the complete schema or a custom store; publish `--tag=scarlett-migrations-diagnostics`, migrate and restart workers |
 | beacon seq column | raw-event storage is on but `scarlett_beacon_events.seq` is missing, or the table cannot be inspected (warn); passes when the column exists or `beacons.store_raw_events` is off |
 | beacon context | `beacons.context` is set but is not a class implementing `ResolvesBeaconContext`, or `scarlett_views.server` does not exist, on a table migrated by 0.1 (fail); the table is missing or cannot be inspected (warn) |
@@ -2008,6 +2038,7 @@ falls through to the bound resolver.
 | `v0.5.0` | 1.22.x, pinned at 1.22.0 (`player.player_version`, was 1.19.1) | `tests/Fixtures/wire/1.22.0-derived/`, derived (recapture owed); the captured 1.19.1 set retained | Verified against the published npm 1.22.0 analytics, embed, chapters, share and captions packages and the CDN `v1.22.0/` files (byte-identical to npm); the browser test runs the npm 1.22.0 embed bundle. The player harness could not capture 1.22.0: three of its own assertions still expect the pre-1.22 unload subset. Heartbeat and unload `viewEnd` carry every counter; `elementSeekCount`, `reconnectCount`, `reconnectDuration`, `dvrTime`; `reconnecting` and `recovered` events; error `networkState`, `readyState`, `online`, `sourceHost`, `reconnecting`; `pause_ms` and heartbeat-only `media_duration`; `liveEnded`; null bitrates and live `completionRate`. Needs the additive `scarlett-migrations-reconnects` migration. `scarlett_view_errors.fatal` now follows severity. `seek_count` coalesces element seek bursts from 1.22. Embed attributes, `Chapter`/`CaptionSource` shapes, addon files and the share snippet are unchanged from 1.19.1 |
 | `v0.6.0` | 1.22.x and 1.23.x, pinned at 1.22.0; ingests the `gaugeScale: 'percent'` marker 1.23.0 adds to viewEnd (kept as a custom dimension) | Unchanged from `v0.5.0` | Additive canonical gauges: `completion_ratio` / `rebuffer_fraction` with independent stamps, normalized to 0..1 from an explicit marker or the source-audited producer registry (scarlett-player 1.22.0 proven percent; magnitude never decides units). Unknown scale, invalid marker and live completion write a stamped null; legacy `completion_rate` / `rebuffer_ratio` keep the received wire values. Needs the additive `scarlett-migrations-gauges` migration on existing hosts; `beacon gauge columns` doctor check; dry-run-first `scarlett:views:backfill-gauges`. Readers must move averages and filters to the canonical columns (see [Canonical gauges](#canonical-gauges-and-upgrading-from-05)) Also carries the never-released 0.5.1 migration fix: the `scarlett-migrations-signals` and `scarlett-migrations-reconnects` copies are dated at publish time, both upgrade migrations are idempotent and resumable, and a copy that sorts before its tables stops with a named error (see [Upgrade migrations](#upgrade-migrations)) |
 | `v0.7.0` | 1.22.x, 1.23.x and 1.24.x, pinned at 1.24.0 (`player.player_version`, was 1.22.0) | `tests/Fixtures/wire/1.24.0/` (captured by the player harness at 1.24.0) and `tests/Fixtures/wire/1.24.0-derived/` (derived, recapture owed) | Verified against the published npm 1.24.0 embed, chapters, share, captions and core packages and the CDN `v1.24.0/` embed bundle (byte-identical to npm); the browser test runs the npm 1.24.0 embed bundle. Nulls for unknown `completionRate` and unusable `rebufferRatio` (1.23), coalesced `seeking` beacons (1.23), a new view on a new source after a view ended, including views that never played (1.24), and retried hls.js `mux` errors with live reconnects (1.24). No migration and no schema change. The embed attribute names, the `Chapter`/`CaptionSource` shapes, the addon file names and the share snippet are unchanged from 1.22.0 |
+| `v0.9.0` | Still pinned at 1.25.0 (`player.player_version`); built for player 1.26.0 | 1.25.0 set retained | Clock-skew correction at ingest: every `*_at` column is the beacon's `timestamp` shifted by (request time minus `sentAt`), `received_at` is the request time, and the viewer's own time and the shift are kept. Additive clock migration (`scarlett-migrations-clock`); `beacons.max_clock_offset`; `beacon clock columns` doctor check. Player 1.26.0 adds `queuedForMs` (a custom dimension) and nothing else the ingest must know. The pin moves once 1.26.0 is on the CDN |
 | `v0.8.0` | 1.22.x through 1.25.x, pinned at 1.25.0 (`player.player_version`, was 1.24.0) | `tests/Fixtures/wire/1.25.0/` (captured by the player harness at 1.25.0) | Verified against the published npm 1.25.0 embed, chapters, share, captions and core packages and the CDN `v1.25.0/` files (byte-identical to npm); the browser test runs the npm 1.25.0 embed bundle. `sentAt` is a known field, kept in the raw log and left out of `custom` and the deduplication hash; the live seek window is a custom dimension. Startup and rebuffer readings rise against 1.24 (frame-based `videoStart`, frozen-picture rebuffers), and load timeouts reconnect. Additive diagnostics migration (`scarlett-migrations-diagnostics`): monotonic `decoded_frames_total` / `dropped_frames_total` and the indexed `viewer_ref`, copied from the server context (`beacons.viewer_ref_key`); `scarlett:views:inspect` for support lookups. The embed attribute names, the `Chapter`/`CaptionSource` shapes, the addon file names and the share snippet are unchanged from 1.24.0 |
 
 Player 1.19.3's `rebufferGraceMs: 0` restores immediate rebuffer counting. Its

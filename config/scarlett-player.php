@@ -157,6 +157,14 @@ return [
         'raw_events_except' => [],
 
         /**
+         * Clock-skew correction: the largest gap, in seconds, between a beacon's
+         * sentAt and the moment the server received it that is still treated as a
+         * wrong viewer clock. A beacon beyond it is stored uncorrected and the
+         * view's clock_source is "rejected". Null or 0 turns the correction off.
+         */
+        'max_clock_offset' => 86400,
+
+        /**
          * Store the client IP address at all.
          */
         'store_ip' => false,

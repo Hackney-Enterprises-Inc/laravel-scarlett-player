@@ -15,6 +15,7 @@ use Illuminate\Contracts\Container\Container;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Support\Facades\Date;
 
 /**
  * POST {prefix}/beacons. Checks the body, queues ProcessBeacon on the beacons
@@ -31,6 +32,10 @@ class BeaconController
 {
     public function __invoke(Request $request, Repository $config, Dispatcher $bus, Container $container): Response|JsonResponse
     {
+        // First, before validation: the receipt time is what the viewer's sentAt is
+        // measured against (ClockCorrection), so no work may precede it.
+        $receivedAt = Date::now()->getTimestampMs();
+
         $beacon = new BeaconRequest($request, $config);
 
         if (! $beacon->passes()) {
@@ -41,7 +46,7 @@ class BeaconController
             $connection = $config->get('scarlett-player.beacons.connection');
             $queue = $config->get('scarlett-player.beacons.queue');
 
-            $payload = $this->withContext($beacon->payload(), $request, $config, $container);
+            $payload = $this->withContext($beacon->payload()->withReceivedAt($receivedAt), $request, $config, $container);
 
             $bus->dispatch(
                 (new ProcessBeacon($payload))
