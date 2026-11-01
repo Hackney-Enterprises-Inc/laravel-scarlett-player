@@ -221,3 +221,22 @@ it('writes a signed offset the column can hold', function (): void {
 
     expect((int) ($this->view)()->clock_offset_ms)->toBe(-80_000_000);
 });
+
+it('corrects with the default cap for a published config from before 0.9.0', function (): void {
+    $beacons = config('scarlett-player.beacons');
+    unset($beacons['max_clock_offset']);
+    config()->set('scarlett-player.beacons', $beacons);
+
+    ($this->deliver)(($this->fast)('viewStart'));
+
+    expect(($this->view)()->clock_source)->toBe('sentAt');
+});
+
+it('turns the correction off with an explicit null cap', function (): void {
+    config()->set('scarlett-player.beacons.max_clock_offset', null);
+
+    ($this->deliver)(($this->fast)('viewStart'));
+
+    expect(($this->view)()->clock_source)->toBe('none')
+        ->and(clockStamp(($this->view)()->started_at))->toBe(clockAt(Beacons::T0));
+});

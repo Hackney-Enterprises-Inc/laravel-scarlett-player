@@ -25,9 +25,11 @@ use Throwable;
  * The timeline shows each beacon's client time, the time the store wrote it and,
  * for player 1.25.0 and later, the gap between that and the browser's `sentAt`:
  * network time plus how far the viewer's clock is off. Since 0.9.0 received_at is
- * the HTTP request time and the occurred_at column is already corrected by that
- * gap, so this is the correction that was applied; rows stored by 0.8.0 and earlier
- * carry the queue wait in it as well. Read only; only the tables EloquentBeaconStore
+ * the HTTP request time, and when the correction applied (clock_source `sentAt`)
+ * occurred_at was shifted by this gap. It is a gap, not always an applied
+ * correction: with the correction off or the offset rejected, occurred_at is
+ * unshifted. A beacon without a controller receipt time (queued by 0.8.0) carries
+ * the queue wait in it as well. Read only; only the tables EloquentBeaconStore
  * writes.
  */
 class InspectViewsCommand extends Command
@@ -267,7 +269,7 @@ class InspectViewsCommand extends Command
             sort($lags);
             $middle = intdiv(count($lags), 2);
             $median = count($lags) % 2 === 1 ? $lags[$middle] : intdiv($lags[$middle - 1] + $lags[$middle], 2);
-            $this->line('Stored minus sentAt, median '.$this->signed($median).' over '.count($lags).' beacons: network time plus how far the viewer\'s clock is behind the server (negative: ahead). Rows stored before 0.9.0 include the beacons queue wait too.');
+            $this->line('Stored minus sentAt, median '.$this->signed($median).' over '.count($lags).' beacons: network time plus how far the viewer\'s clock is behind the server (negative: ahead). Beacons without a controller receipt time (queued by 0.8.0, or stored before 0.9.0) include the queue wait too.');
         }
 
         $this->line('Timeline'.(count($events) === $limit ? ' (last '.$limit.', raise --events for more)' : ''));

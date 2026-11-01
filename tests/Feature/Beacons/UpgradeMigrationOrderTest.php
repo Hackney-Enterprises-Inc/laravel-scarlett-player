@@ -538,3 +538,15 @@ it('passes for ordered layouts, missing directories, no create migrations and ot
     File::deleteDirectory($this->destination);
     expect(upgradeOrderCheck()->status)->toBe(CheckStatus::Pass);
 });
+
+it('warns when the clock upgrade sorts before the events create migration only', function (): void {
+    File::ensureDirectoryExists($this->destination);
+    foreach (['2026_10_07_120001_create_scarlett_views_table', '2026_10_07_120003_create_scarlett_view_errors_table', '2026_10_07_120005_create_scarlett_beacon_events_table', '2026_10_07_120004_add_clock_correction_to_scarlett_tables'] as $name) {
+        File::put($this->destination.'/'.$name.'.php', '<?php return null;');
+    }
+
+    $result = upgradeOrderCheck();
+
+    expect($result->status)->toBe(CheckStatus::Warn)
+        ->and($result->message)->toContain('120004_add_clock_correction_to_scarlett_tables.php sorts before 2026_10_07_120005_create_scarlett_beacon_events_table.php');
+});

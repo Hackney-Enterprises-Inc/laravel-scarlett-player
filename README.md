@@ -145,8 +145,8 @@ older string form) has it off and gets the file under its `0001_01_01_...` name:
 `'migrations' => ['table' => 'migrations', 'update_date_on_publish' => true]` before
 publishing, or write your own dated migration (below).
 
-All four upgrade migrations are idempotent (the first three from 0.6.0, the diagnostics one
-from its first release). A column or index that already exists is left alone, so publishing a tag twice (each publish adds another dated copy), a database that
+All five upgrade migrations are idempotent (the first three from 0.6.0, the diagnostics and
+clock ones from their first release). A column or index that already exists is left alone, so publishing a tag twice (each publish adds another dated copy), a database that
 already ran an earlier copy, or a host that added the columns itself all migrate as a
 no-op. The signals migration adds `qoe_version` first, on its own, and marks existing
 scores as QoE v1 straight after, so the backfill runs in the run that adds the column.
@@ -155,8 +155,8 @@ rerun that finds `qoe_version` as the only signals column cannot tell whether th
 backfill finished, so it marks scored rows still without a version as v1 again. Rows that
 already carry a version are never changed. Rolling a copy back drops its columns only when no other copy of the
 same upgrade (a migration whose name ends `_add_signals_to_scarlett_tables`,
-`_add_reconnects_to_scarlett_tables`, `_add_gauges_to_scarlett_tables` or
-`_add_diagnostics_to_scarlett_tables`) is still recorded as run.
+`_add_reconnects_to_scarlett_tables`, `_add_gauges_to_scarlett_tables`,
+`_add_diagnostics_to_scarlett_tables` or `_add_clock_correction_to_scarlett_tables`) is still recorded as run.
 
 **Published with 0.4.x or 0.5.0?** Those tags wrote the fixed names
 `0001_01_01_000005_add_signals_to_scarlett_tables.php` and
@@ -185,7 +185,7 @@ order and there is nothing to repair.
 column lists from the upgrade sections below (every column nullable; `*_at` columns are
 `dateTime` with precision 3) and skip the tags. Name the file with the package's suffix
 (`..._add_signals_to_scarlett_tables.php`, `..._add_reconnects_to_scarlett_tables.php`,
-`..._add_gauges_to_scarlett_tables.php`, `..._add_diagnostics_to_scarlett_tables.php`) if a published copy may also run, so a rollback of that copy keeps your columns.
+`..._add_gauges_to_scarlett_tables.php`, `..._add_diagnostics_to_scarlett_tables.php`, `..._add_clock_correction_to_scarlett_tables.php`) if a published copy may also run, so a rollback of that copy keeps your columns.
 
 ### Routes
 
@@ -1190,9 +1190,11 @@ startup, rebuffers, reconnects, dropped frames, gauges, the server and custom ma
 errors (severity, category, code, HTTP status, source host, message) and its raw beacon
 timeline (`--events`, the newest 100 by default). For player 1.25 and later the timeline
 shows each beacon's stored time minus its `sentAt`, with the median per view: network time
-plus how far the viewer's clock is off, which is the correction 0.9.0 applied. Rows stored
-by 0.8.0 or earlier include the beacons queue wait as well, because `received_at` was the
-time the queued job ran. The timeline needs `beacons.store_raw_events`; the
+plus how far the viewer's clock is off. It is the gap 0.9.0 corrects by when the beacon was
+corrected (`clock_source` `sentAt`); with the correction off or the offset rejected the
+stamps are unshifted. A beacon without a controller receipt time (queued by 0.8.0, or stored
+before 0.9.0) includes the beacons queue wait as well, because its `received_at` is the time
+the queued job ran. The timeline needs `beacons.store_raw_events`; the
 command names any events `beacons.raw_events_except` leaves out (leaving out `heartbeat`
 removes most of a view's timeline). `--since` takes `30m`, `24h`, `7d` or a date and
 filters on when the view was last updated. Read only, and for the Eloquent store only.
@@ -2051,9 +2053,9 @@ falls through to the bound resolver.
 | `v0.5.0` | 1.22.x, pinned at 1.22.0 (`player.player_version`, was 1.19.1) | `tests/Fixtures/wire/1.22.0-derived/`, derived (recapture owed); the captured 1.19.1 set retained | Verified against the published npm 1.22.0 analytics, embed, chapters, share and captions packages and the CDN `v1.22.0/` files (byte-identical to npm); the browser test runs the npm 1.22.0 embed bundle. The player harness could not capture 1.22.0: three of its own assertions still expect the pre-1.22 unload subset. Heartbeat and unload `viewEnd` carry every counter; `elementSeekCount`, `reconnectCount`, `reconnectDuration`, `dvrTime`; `reconnecting` and `recovered` events; error `networkState`, `readyState`, `online`, `sourceHost`, `reconnecting`; `pause_ms` and heartbeat-only `media_duration`; `liveEnded`; null bitrates and live `completionRate`. Needs the additive `scarlett-migrations-reconnects` migration. `scarlett_view_errors.fatal` now follows severity. `seek_count` coalesces element seek bursts from 1.22. Embed attributes, `Chapter`/`CaptionSource` shapes, addon files and the share snippet are unchanged from 1.19.1 |
 | `v0.6.0` | 1.22.x and 1.23.x, pinned at 1.22.0; ingests the `gaugeScale: 'percent'` marker 1.23.0 adds to viewEnd (kept as a custom dimension) | Unchanged from `v0.5.0` | Additive canonical gauges: `completion_ratio` / `rebuffer_fraction` with independent stamps, normalized to 0..1 from an explicit marker or the source-audited producer registry (scarlett-player 1.22.0 proven percent; magnitude never decides units). Unknown scale, invalid marker and live completion write a stamped null; legacy `completion_rate` / `rebuffer_ratio` keep the received wire values. Needs the additive `scarlett-migrations-gauges` migration on existing hosts; `beacon gauge columns` doctor check; dry-run-first `scarlett:views:backfill-gauges`. Readers must move averages and filters to the canonical columns (see [Canonical gauges](#canonical-gauges-and-upgrading-from-05)) Also carries the never-released 0.5.1 migration fix: the `scarlett-migrations-signals` and `scarlett-migrations-reconnects` copies are dated at publish time, both upgrade migrations are idempotent and resumable, and a copy that sorts before its tables stops with a named error (see [Upgrade migrations](#upgrade-migrations)) |
 | `v0.7.0` | 1.22.x, 1.23.x and 1.24.x, pinned at 1.24.0 (`player.player_version`, was 1.22.0) | `tests/Fixtures/wire/1.24.0/` (captured by the player harness at 1.24.0) and `tests/Fixtures/wire/1.24.0-derived/` (derived, recapture owed) | Verified against the published npm 1.24.0 embed, chapters, share, captions and core packages and the CDN `v1.24.0/` embed bundle (byte-identical to npm); the browser test runs the npm 1.24.0 embed bundle. Nulls for unknown `completionRate` and unusable `rebufferRatio` (1.23), coalesced `seeking` beacons (1.23), a new view on a new source after a view ended, including views that never played (1.24), and retried hls.js `mux` errors with live reconnects (1.24). No migration and no schema change. The embed attribute names, the `Chapter`/`CaptionSource` shapes, the addon file names and the share snippet are unchanged from 1.22.0 |
-| `v0.9.1` | 1.22.x through 1.26.x, pinned at 1.26.0 (`player.player_version`, was 1.25.0) | `tests/Fixtures/wire/1.26.0/` (captured by the player harness at 1.26.0; the 1.25.0 set is retained) | Verified against the published npm 1.26.0 embed, chapters, share, captions and core packages: the embed attribute README, `normaliseChapters()`, `buildEmbedSnippet()`, `Chapter` and `CaptionSource` are byte-identical to 1.25.0, and the browser test runs the npm 1.26.0 embed bundle. 1.26.0 adds `queuedForMs` (a custom dimension, stored in `custom` and the raw log) on events tracked before the analytics plugin initialised, and the player now ignores the page-teardown `Media source not supported` element error, so fewer warnings are reported by iOS views. No migration, no config change except the new default pin |
-| `v0.9.0` | Still pinned at 1.25.0 (`player.player_version`); built for player 1.26.0 | 1.25.0 set retained | Clock-skew correction at ingest: every `*_at` column is the beacon's `timestamp` shifted by (request time minus `sentAt`), `received_at` is the request time, and the viewer's own time and the shift are kept. Additive clock migration (`scarlett-migrations-clock`); `beacons.max_clock_offset`; `beacon clock columns` doctor check. Player 1.26.0 adds `queuedForMs` (a custom dimension) and nothing else the ingest must know. The pin moves once 1.26.0 is on the CDN |
 | `v0.8.0` | 1.22.x through 1.25.x, pinned at 1.25.0 (`player.player_version`, was 1.24.0) | `tests/Fixtures/wire/1.25.0/` (captured by the player harness at 1.25.0) | Verified against the published npm 1.25.0 embed, chapters, share, captions and core packages and the CDN `v1.25.0/` files (byte-identical to npm); the browser test runs the npm 1.25.0 embed bundle. `sentAt` is a known field, kept in the raw log and left out of `custom` and the deduplication hash; the live seek window is a custom dimension. Startup and rebuffer readings rise against 1.24 (frame-based `videoStart`, frozen-picture rebuffers), and load timeouts reconnect. Additive diagnostics migration (`scarlett-migrations-diagnostics`): monotonic `decoded_frames_total` / `dropped_frames_total` and the indexed `viewer_ref`, copied from the server context (`beacons.viewer_ref_key`); `scarlett:views:inspect` for support lookups. The embed attribute names, the `Chapter`/`CaptionSource` shapes, the addon file names and the share snippet are unchanged from 1.24.0 |
+| `v0.9.0` | Still pinned at 1.25.0 (`player.player_version`); built for player 1.26.0 | 1.25.0 set retained | Clock-skew correction at ingest: every `*_at` column is the beacon's `timestamp` shifted by (request time minus `sentAt`), `received_at` is the request time, and the viewer's own time and the shift are kept. Additive clock migration (`scarlett-migrations-clock`); `beacons.max_clock_offset`; `beacon clock columns` doctor check. Player 1.26.0 adds `queuedForMs` (a custom dimension) and nothing else the ingest must know. The pin moves once 1.26.0 is on the CDN |
+| `v0.9.1` | 1.22.x through 1.26.x, pinned at 1.26.0 (`player.player_version`, was 1.25.0) | `tests/Fixtures/wire/1.26.0/` (captured by the player harness at 1.26.0; the 1.25.0 set is retained) | Verified against the published npm 1.26.0 embed, chapters, share, captions and core packages: the embed attribute README, `normaliseChapters()`, `buildEmbedSnippet()`, `Chapter` and `CaptionSource` are byte-identical to 1.25.0, and the browser test runs the npm 1.26.0 embed bundle. 1.26.0 adds `queuedForMs` (a custom dimension, stored in `custom` and the raw log) on events tracked before the analytics plugin initialised, and the player now ignores the page-teardown `Media source not supported` element error, so fewer warnings are reported by iOS views. No migration, no config change except the new default pin |
 
 Player 1.19.3's `rebufferGraceMs: 0` restores immediate rebuffer counting. Its
 `rebufferStart.timestamp` is the send time, not backdated to the first `waiting`;

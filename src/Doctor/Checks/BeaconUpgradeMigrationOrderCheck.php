@@ -57,7 +57,7 @@ class BeaconUpgradeMigrationOrderCheck implements Check
             return CheckResult::warn('could not list the registered migrations: '.$e->getMessage());
         }
 
-        $creates = array_values(array_filter($names, fn (string $name): bool => $this->endsWithAny($name, [self::VIEWS, self::ERRORS])));
+        $creates = array_values(array_filter($names, fn (string $name): bool => $this->endsWithAny($name, [self::VIEWS, self::ERRORS, self::EVENTS])));
 
         if ($creates === []) {
             return CheckResult::pass('no scarlett create migration in the registered migration paths');

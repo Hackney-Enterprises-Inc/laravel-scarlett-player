@@ -1212,7 +1212,7 @@ class EloquentBeaconStore implements BeaconStore
     /** The beacon's clock correction under beacons.max_clock_offset (seconds; null or 0 is off). */
     private function clock(BeaconPayload $payload): ClockCorrection
     {
-        $cap = $this->config->get('scarlett-player.beacons.max_clock_offset');
+        $cap = $this->config->get('scarlett-player.beacons.max_clock_offset', 86400);
 
         if (! is_numeric($cap) || $cap <= 0) {
             return ClockCorrection::none();

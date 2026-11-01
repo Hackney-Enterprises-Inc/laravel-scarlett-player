@@ -420,7 +420,7 @@ final readonly class BeaconPayload
             $this->event, $this->timestamp, $this->viewId, $this->sessionId, $this->viewerId,
             $this->videoId, $this->context, $this->fields, $this->custom, $this->ip, $this->server,
             $this->owned, $this->bodyHash,
-        ))->carryLegacy($this);
+        ))->carryLegacy($this, receivedAt: false);
 
         $copy->receivedAtMs = $milliseconds; // @phpstan-ignore property.readOnlyAssignNotInConstructor
 
@@ -746,7 +746,7 @@ final readonly class BeaconPayload
     }
 
     /** Give a with*() copy this payload's captured legacy values and gauge provenance, if it has any. */
-    private function carryLegacy(self $from): self
+    private function carryLegacy(self $from, bool $receivedAt = true): self
     {
         if (isset($from->legacyKnown)) {
             $this->legacyKnown = $from->legacyKnown; // @phpstan-ignore property.readOnlyAssignNotInConstructor
@@ -756,7 +756,7 @@ final readonly class BeaconPayload
             $this->gaugeNulls = $from->gaugeNulls; // @phpstan-ignore property.readOnlyAssignNotInConstructor
         }
 
-        if (isset($from->receivedAtMs)) {
+        if ($receivedAt && isset($from->receivedAtMs)) {
             $this->receivedAtMs = $from->receivedAtMs; // @phpstan-ignore property.readOnlyAssignNotInConstructor
         }
 

@@ -95,3 +95,10 @@ it('does not move the body hash', function (): void {
 
     expect($payload->withReceivedAt(Beacons::T0 + 99)->bodyHash)->toBe($payload->bodyHash);
 });
+
+it('can be stamped again, the newer receipt time winning', function (): void {
+    $payload = Beacons::payload('heartbeat', 0, ['sentAt' => Beacons::T0])->withReceivedAt(Beacons::T0 + 7);
+
+    expect($payload->withReceivedAt(Beacons::T0 + 99)->receivedAtMs())->toBe(Beacons::T0 + 99)
+        ->and($payload->receivedAtMs())->toBe(Beacons::T0 + 7);
+});

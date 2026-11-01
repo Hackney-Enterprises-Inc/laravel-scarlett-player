@@ -28,7 +28,7 @@ Upgrading from 0.8: update the package, then `php artisan vendor:publish --tag=s
 
 ### Changed
 
-- `scarlett:views:inspect`: "Stored minus sentAt" is now network time plus the viewer's clock error, the correction applied. It no longer includes the beacons queue wait for rows stored by 0.9.0.
+- `scarlett:views:inspect`: "Stored minus sentAt" is now network time plus the viewer's clock error, the correction applied. It no longer includes the beacons queue wait for beacons stamped at the request; a beacon queued by 0.8.0 has no receipt time and still does.
 - `player.player_version` stays 1.25.0. Player 1.26.0 adds a `queuedForMs` custom dimension and nothing the ingest must know; the pin moves once 1.26.0 is on the CDN and its embed attributes are verified.
 
 ## [0.8.0] - 2026-10-13
