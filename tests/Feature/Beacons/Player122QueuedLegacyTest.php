@@ -232,7 +232,7 @@ describe('provenance of legacy known values (round 2)', function (): void {
         '0.4-era queue' => [SIGNALS_ERA_CUSTOM],
     ])->with(['old first' => true, 'fresh first' => false]);
 
-    it('captures legacy values only from promoted names, and keeps them through re-serialization and with*()', function (): void {
+    it('captures legacy values only from promoted names, and keeps them through re-serialization and with*() while custom still holds them', function (): void {
         $legacy = restoredWithoutMarker(new BeaconPayload('error', Beacons::T0, 'v', 's', 'w', 'm', [], ['fatal' => true], [
             'reconnecting' => true, 'networkState' => '2', 'duration' => 12.5, 'tenant' => 'a',
         ]));
@@ -241,7 +241,9 @@ describe('provenance of legacy known values (round 2)', function (): void {
             ->and($legacy->knownValue('networkState'))->toBeNull()
             ->and($legacy->knownValue('duration'))->toBeNull()
             ->and($legacy->custom)->toBe(['reconnecting' => true, 'networkState' => '2', 'duration' => 12.5, 'tenant' => 'a'])
-            ->and($legacy->withCustom([])->withIp(null)->withServer(['reconnecting' => null])->knownValue('reconnecting'))->toBeTrue()
+            ->and($legacy->withCustom($legacy->custom)->withIp(null)->withServer(['reconnecting' => null])->knownValue('reconnecting'))->toBeTrue()
+            // A pipeline that empties the custom dimensions redacts the restored value too.
+            ->and($legacy->withCustom([])->knownValue('reconnecting'))->toBeNull()
             ->and(unserialize(serialize($legacy))->knownValue('reconnecting'))->toBeTrue()
             ->and(unserialize(serialize($legacy))->bodyHash)->toBe($legacy->bodyHash);
     });

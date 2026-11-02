@@ -35,6 +35,7 @@ class BeaconUpgradeMigrationOrderCheck implements Check
         '_add_gauges_to_scarlett_tables' => ['scarlett-migrations-gauges', [self::VIEWS]],
         '_add_diagnostics_to_scarlett_tables' => ['scarlett-migrations-diagnostics', [self::VIEWS]],
         '_add_clock_correction_to_scarlett_tables' => ['scarlett-migrations-clock', [self::VIEWS, self::EVENTS, self::ERRORS]],
+        '_add_start_state_and_stalled_to_scarlett_tables' => ['scarlett-migrations-startstate', [self::VIEWS, self::ERRORS]],
     ];
 
     public function __construct(private readonly Container $container) {}
@@ -77,7 +78,7 @@ class BeaconUpgradeMigrationOrderCheck implements Check
         }
 
         if ($misplaced !== []) {
-            return CheckResult::warn(implode('; ', $misplaced).'. A fresh migrate runs it before the table exists and stops. A database that already ran it is fine. Delete the copy if another copy sorts after the creates (a full scarlett-migrations publish from 0.4.0 contains the signals upgrade, from 0.5.0 the reconnects one, from 0.6.0 the gauges one, from 0.8.0 the diagnostics one, from 0.9.0 the clock one); otherwise delete a fixed 0001_01_01_ name and publish its tag again, or rename a dated copy to sort after the create migrations.');
+            return CheckResult::warn(implode('; ', $misplaced).'. A fresh migrate runs it before the table exists and stops. A database that already ran it is fine. Delete the copy if another copy sorts after the creates (a full scarlett-migrations publish from 0.4.0 contains the signals upgrade, from 0.5.0 the reconnects one, from 0.6.0 the gauges one, from 0.8.0 the diagnostics one, from 0.9.0 the clock one, from 0.10.0 the start state one); otherwise delete a fixed 0001_01_01_ name and publish its tag again, or rename a dated copy to sort after the create migrations.');
         }
 
         return CheckResult::pass('every scarlett upgrade migration sorts after the create migrations');

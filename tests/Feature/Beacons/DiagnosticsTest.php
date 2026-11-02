@@ -196,7 +196,7 @@ describe('jobs queued across the upgrade', function (): void {
             $fresh->context, ['watchTime' => 5], ['decodedFramesTotal' => 396, 'droppedFramesTotal' => 4, 'tenant' => 'wire'],
             bodyHash: $fresh->bodyHash,
         );
-        $serialized = str_replace('s:13:"serialVersion";i:2;', 's:13:"serialVersion";i:1;', serialize($old));
+        $serialized = str_replace('s:13:"serialVersion";i:3;', 's:13:"serialVersion";i:1;', serialize($old));
         expect($serialized)->toContain('s:13:"serialVersion";i:1;');
 
         return unserialize($serialized);

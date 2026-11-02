@@ -6,7 +6,7 @@ documents; the tests check every emitted name against this copy.
 
 | File | Player | Source | State |
 |---|---|---|---|
-| `1.26.0/README.md` | 1.26.0 | `package/README.md` from `npm pack @scarlett-player/embed@1.26.0` (tarball sha256 `3e69054efaea614b1f52034d0a1a611180a066a0fa7ff2dff7ff46c25e8566c9`), 2026-11-02 | verbatim, sha256 `89db9921694610c862c5a096c02fcc957092ead89462d430e2fa33071920d121` |
+| `1.27.0/README.md` | 1.27.0 | `package/README.md` from `npm pack @scarlett-player/embed@1.27.0` (tarball sha256 `e33355c3542977f7ddf65d1afbc8d6f8038f0d120375d3caff60eed492b7813b`), 2026-11-02 | verbatim, sha256 `89db9921694610c862c5a096c02fcc957092ead89462d430e2fa33071920d121` |
 
 Re-take it from the published package when the player pin moves.
 
@@ -28,4 +28,7 @@ Repin to 1.25.0 (2026-10-13): the published 1.25.0 README is byte-identical to t
 (same sha256), so the directory was renamed and the file kept.
 
 Repin to 1.26.0 (2026-11-02): the published 1.26.0 README is byte-identical to the 1.25.0 copy
+(same sha256), so the directory was renamed and the file kept.
+
+Repin to 1.27.0 (2026-11-02): the published 1.27.0 README is byte-identical to the 1.26.0 copy
 (same sha256), so the directory was renamed and the file kept.

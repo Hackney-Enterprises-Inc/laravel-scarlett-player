@@ -44,9 +44,11 @@ final readonly class BeaconPayload
     /**
      * Known-typed values of names promoted since the job was queued, captured from
      * $custom once, when a payload serialized by an older package (no SERIAL_VERSION
-     * marker) is restored. Uninitialized on every other payload. Carried unchanged
-     * through the with*() methods, so neither a pipeline's withCustom() nor
-     * withServer() ownership adds or removes one. Read only by knownValue().
+     * marker) is restored. Uninitialized on every other payload. withCustom() keeps a
+     * value only while the map it is given still holds that name with a valid type
+     * (the replacement wins), so a pipeline can redact one by removing or retyping it
+     * there; withServer() ownership neither adds nor removes one. Read only by
+     * knownValue().
      *
      * Deliberately not set by the constructor, whose public signature stays as it
      * was: PHP lets the class initialize a readonly property once from its own scope
@@ -81,9 +83,9 @@ final readonly class BeaconPayload
      * Written by __serialize(). A serialized payload without it, or with an older
      * version, was queued by an older package, whose classification may have left
      * promoted names in custom: none before 0.5.0, version 1 from 0.5.0 to 0.7.x,
-     * version 2 from 0.8.0.
+     * version 2 from 0.8.0 to 0.9.x, version 3 from 0.10.0.
      */
-    private const SERIAL_VERSION = 2;
+    private const SERIAL_VERSION = 3;
 
     /**
      * Names promoted since serial version 1 (0.8.0, player 1.25.0), captured from
@@ -91,6 +93,12 @@ final readonly class BeaconPayload
      * out: nothing reads it through knownValue().
      */
     private const PROMOTED_SINCE_SERIAL_1 = ['decodedFramesTotal', 'droppedFramesTotal'];
+
+    /**
+     * Names promoted since serial version 2 (0.10.0, player 1.27.0),
+     * captured from the custom dimensions of a job queued by 0.8.0 to 0.9.x.
+     */
+    private const PROMOTED_SINCE_SERIAL_2 = ['startState', 'stalled'];
 
     /** Keys every beacon carries. The four ids are required. */
     public const IDENTITY = ['event', 'timestamp', 'viewId', 'sessionId', 'viewerId', 'videoId'];
@@ -154,6 +162,9 @@ final readonly class BeaconPayload
         // player 1.25.0
         'decodedFramesTotal',
         'droppedFramesTotal',
+        // player 1.27.0
+        'startState',
+        'stalled',
     ];
 
     /**
@@ -272,6 +283,12 @@ final readonly class BeaconPayload
         // every beacon from the built-in transport (player 1.25.0): dispatch time,
         // epoch ms. Raw log only, never hashed (HASH_EXCLUDED).
         'sentAt' => 'numeric',
+        // viewEnd (player 1.27.0): why the view never played, one of
+        // played, awaitingTap, failed, never.
+        'startState' => 'string',
+        // the terminal error of the player's stall ceiling; true only together with
+        // reconnectExhausted.
+        'stalled' => 'boolean',
     ];
 
     /**
@@ -504,11 +521,23 @@ final readonly class BeaconPayload
      */
     public function withCustom(array $custom): self
     {
+        $custom = array_diff_key($custom, array_flip($this->owned));
+
+        // A restored value was captured from the custom dimensions, so the map the
+        // pipeline hands back decides it: removed or retyped there, it is redacted.
+        $legacy = [];
+
+        foreach ($this->legacyKnown ?? [] as $key => $_) {
+            if (isset(self::FIELDS[$key]) && self::isType($custom[$key] ?? null, self::FIELDS[$key])) {
+                $legacy[$key] = self::field($custom[$key]);
+            }
+        }
+
         return (new self(
             $this->event, $this->timestamp, $this->viewId, $this->sessionId, $this->viewerId,
-            $this->videoId, $this->context, $this->fields, array_diff_key($custom, array_flip($this->owned)),
+            $this->videoId, $this->context, $this->fields, $custom,
             $this->ip, $this->server, $this->owned, $this->bodyHash,
-        ))->carryLegacy($this);
+        ))->carryLegacy($this, legacy: isset($this->legacyKnown) ? $legacy : null);
     }
 
     /**
@@ -701,9 +730,14 @@ final readonly class BeaconPayload
             }
         }
 
-        if ($version !== null && $version < 2) {
-            // Queued by 0.5.0 to 0.7.x: the names promoted since, left in custom.
-            foreach (self::PROMOTED_SINCE_SERIAL_1 as $key) {
+        if ($version !== null && $version < 3) {
+            // Queued by 0.5.0 to 0.9.x: the names promoted since, left in custom. A job
+            // from before 0.8.0 lacks both promotions; one from 0.8.0 on, only the later.
+            $promoted = $version < 2
+                ? [...self::PROMOTED_SINCE_SERIAL_1, ...self::PROMOTED_SINCE_SERIAL_2]
+                : self::PROMOTED_SINCE_SERIAL_2;
+
+            foreach ($promoted as $key) {
                 $value = $this->custom[$key] ?? null;
 
                 if (! $this->has($key) && ! array_key_exists($key, $legacy) && self::isType($value, self::FIELDS[$key])) {
@@ -745,10 +779,18 @@ final readonly class BeaconPayload
         }
     }
 
-    /** Give a with*() copy this payload's captured legacy values and gauge provenance, if it has any. */
-    private function carryLegacy(self $from, bool $receivedAt = true): self
+    /**
+     * Give a with*() copy this payload's captured legacy values and gauge provenance, if it has any.
+     *
+     * @param  array<string, int|float|string|bool>|null  $legacy  the values to carry instead of $from's
+     */
+    private function carryLegacy(self $from, bool $receivedAt = true, ?array $legacy = null): self
     {
-        if (isset($from->legacyKnown)) {
+        if ($legacy !== null) {
+            if ($legacy !== []) {
+                $this->legacyKnown = $legacy; // @phpstan-ignore property.readOnlyAssignNotInConstructor
+            }
+        } elseif (isset($from->legacyKnown)) {
             $this->legacyKnown = $from->legacyKnown; // @phpstan-ignore property.readOnlyAssignNotInConstructor
         }
 

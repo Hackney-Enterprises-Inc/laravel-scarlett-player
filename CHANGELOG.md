@@ -4,6 +4,28 @@ All notable changes to `hei/laravel-scarlett-player` are documented here. The fo
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - Unreleased
+
+Upgrading from 0.9: update the package, then `php artisan vendor:publish --tag=scarlett-migrations-startstate`, `php artisan migrate` and `php artisan queue:restart`. Fresh installs publish only `scarlett-migrations`. Until the migration runs, ingest keeps working and skips the new columns, and `scarlett:doctor` warns. Rows already stored are not rewritten. Move the host's `@scarlett-player/*` packages to 1.27.0 with the package update, which is also the new default `player.player_version`; set `SCARLETT_PLAYER_VERSION=1.26.0` to stay on the old bundle. A host that published the config file keeps the old default inside its own copy, so the package update alone leaves embed mode on the 1.26.0 bundle: set `SCARLETT_PLAYER_VERSION=1.27.0` or edit `player.player_version` in the published file, then rebuild the config cache.
+
+### Added
+
+- `startState` on `viewEnd` (`played`, `awaitingTap`, `failed`, `never`) is a known string field, stored in `scarlett_views.start_state`, set once and cut to 16 characters. A value of another type stays a custom dimension.
+- `stalled` on an `error` beacon (true on the terminal error of the player's stall ceiling, together with `reconnectExhausted`) is a known boolean field, stored in `scarlett_view_errors.stalled`.
+- `playBlocked` beacons (`reason`, `errorName`, `readyState`) are accepted as raw events; `reason` and `errorName` are custom dimensions. No column.
+- Additive migration `0001_01_01_000010_add_start_state_and_stalled_to_scarlett_tables.php`: nullable `scarlett_views.start_state` and `scarlett_view_errors.stalled`. Published alone with `--tag=scarlett-migrations-startstate`, idempotent, stops with `UpgradeMigrationOrderException` before any change when a create migration has not run, and `down()` drops only the columns it owns.
+- `beacon start state columns` doctor check and the start state suffix in `beacon upgrade migration order`.
+- README: "Why a view never played, and upgrading from 0.9", the publish tag, the doctor row and the `v0.10.0` compatibility row, and reader guidance for rebuffering and QoE (read `rebuffer_fraction`, filter `play_ms > 0`, never average `qoe_score` across `qoe_version`).
+
+### Changed
+
+- Pinned to player 1.27.0: `player.player_version` defaults to `1.27.0` (was `1.26.0`), so embed mode loads the CDN's `v1.27.0/` bundle and its addons as soon as the package deploys, unless the host pins another version. Verified against the published npm 1.27.0 embed, chapters, share, captions and core packages: the embed attribute README, `normaliseChapters()`, `buildEmbedSnippet()`, `Chapter` and `CaptionSource` are byte-identical to 1.26.0. All 14 `.js`, `.cjs` files the CDN serves under `v1.27.0/` (`embed.js`, `embed.umd.cjs`, the chapters and clips addons in both formats, the audio and video builds, `hls.1.27.0.js` and `hls.light.1.27.0.js`) were compared with the npm tarball and are byte-identical.
+- Fixtures: a fresh 1.27.0 wire capture (`tests/Fixtures/wire/1.27.0/`, 35 files, replayed through the route by `Player127Test`) that includes the new beacons (`playBlocked`, the awaiting-tap `viewEnd`, the stalled error and its `viewEnd`); the embed attribute, chapters, share and browser-bundle fixtures moved to 1.27.0 with their provenance. The 1.26.0 wire set is retained. The browser test now asserts the real `never` start state of its page, which never asks to play. The hand-built `StartStateTest` cases stay for what a capture cannot show: an older schema, a job queued by 0.9.x, hostile values and the `never` state (which the capture does not produce, though the browser test's page does).
+- Readers of player 1.27.0 (QoE v3): a view that never showed a first frame now scores 0 when it asked to play and got none, and null when it never asked or is waiting for a tap (older players scored it near 100). Running heartbeats before the first frame carry a null score. Compare v3 as its own series: zero-scored views can pull its average below v2's for the same traffic, null-scored views drop out of `AVG`, and a group of only null scores averages to null.
+- `BeaconPayload` serializes with classification version 3. `startState` and `stalled` were custom dimensions in 0.9.x and keep their place in the deduplication hash, so a beacon redelivered across the upgrade has the same event key. A job queued by 0.9.x (or earlier) still fills the new columns, because `knownValue()` captures both names from its custom dimensions.
+- `BeaconPayload::withCustom()` now decides the values restored from a job queued by an older package (`startState`, `pageUrl` and the other names promoted since): they stay only while the map the pipeline returns still holds that name with a valid type, and the pipeline's value replaces the queued one. A step that removes or rewrites one of them in `custom` now redacts the typed column too; before, the queued original was still written. Fresh payloads are unchanged.
+- Readers of the new player release: a `pause` beacon follows `playRequest` on a blocked play (the browser's own pause event after the refused `play()`); it is not a viewer action.
+
 ## [0.9.1] - 2026-11-02
 
 No migration and no ingest change. Move the host's `@scarlett-player/*` packages to 1.26.0 with the package update, or set `SCARLETT_PLAYER_VERSION=1.25.0` to stay on the old bundle.
