@@ -935,7 +935,9 @@ class EloquentBeaconStore implements BeaconStore
         $columns = [];
 
         foreach (self::SET_ONCE as $key => $column) {
-            $value = $payload->get($key);
+            // knownValue(), not get(): a job queued by an older package keeps a key promoted
+            // since (startState, from 0.10.0) in custom, and only knownValue() recovers it
+            $value = $payload->knownValue($key);
 
             if ($value !== null) {
                 $columns[$column] = is_bool($value) ? $value : $this->string($value, match ($column) {

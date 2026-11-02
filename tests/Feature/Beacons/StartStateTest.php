@@ -118,6 +118,28 @@ it('keeps ingesting on a schema without the start state columns', function (): v
     }
 });
 
+it('keeps startState and stalled only in the raw log, not in custom, while the columns are absent', function (): void {
+    startStateMigration()->down();
+
+    try {
+        ($this->deliver)(
+            Beacons::payload('viewStart'),
+            Beacons::payload('error', 1_000, ['errorType' => 'x', 'errorMessage' => 'y', 'fatal' => true, 'errorSeverity' => 'fatal', 'reconnectExhausted' => true, 'stalled' => true]),
+            Beacons::payload('viewEnd', 5_000, ['exitType' => 'error', 'startState' => 'failed']),
+        );
+
+        $view = ($this->view)();
+        $custom = json_decode((string) $view->custom, true) ?? [];
+        $raw = DB::table('scarlett_beacon_events')->pluck('payload')->map(fn ($p) => json_decode((string) $p, true))->all();
+
+        expect($custom)->not->toHaveKey('startState')->not->toHaveKey('stalled')
+            ->and(collect($raw)->pluck('startState')->filter()->values()->all())->toBe(['failed'])
+            ->and(collect($raw)->pluck('stalled')->filter()->values()->all())->toBe([true]);
+    } finally {
+        startStateMigration()->up();
+    }
+});
+
 it('is reported by the doctor until the start state migration runs', function (): void {
     expect(app(CheckRegistry::class)->classes())->toContain(BeaconStartStateColumnsCheck::class)
         ->and(app(BeaconStartStateColumnsCheck::class)->run()->status)->toBe(CheckStatus::Pass);
@@ -127,7 +149,10 @@ it('is reported by the doctor until the start state migration runs', function ()
     try {
         $result = app(BeaconStartStateColumnsCheck::class)->run();
         expect($result->status)->toBe(CheckStatus::Warn)
-            ->and($result->message)->toContain('scarlett_views.start_state', 'scarlett_view_errors.stalled', '--tag=scarlett-migrations-startstate');
+            ->and($result->message)->toContain('scarlett_views.start_state', 'scarlett_view_errors.stalled', '--tag=scarlett-migrations-startstate')
+            // Typed known fields are not custom dimensions: only the raw event log keeps them
+            ->and($result->message)->toContain('known fields, not custom dimensions', 'raw event log')
+            ->and($result->message)->not->toContain('and the custom dimensions');
     } finally {
         startStateMigration()->up();
     }
@@ -177,6 +202,28 @@ describe('jobs queued across the upgrade', function (): void {
 
         expect(($this->view)()->start_state)->toBe('awaitingTap')
             ->and(DB::table('scarlett_beacon_events')->count())->toBe(1);
+    });
+
+    it('fills start_state from the restored 0.9.x job alone, with no fresh copy to fill it', function (): void {
+        ($this->deliver)(queuedBy09());
+
+        expect(($this->view)()->start_state)->toBe('awaitingTap');
+    });
+
+    it('fills stalled on the error row from a restored 0.9.x job alone', function (): void {
+        $fresh = Beacons::payload('error', 1_000, ['errorType' => 'x', 'errorMessage' => 'y', 'fatal' => true, 'errorSeverity' => 'fatal', 'reconnectExhausted' => true, 'stalled' => true]);
+        $old = new BeaconPayload(
+            $fresh->event, $fresh->timestamp, $fresh->viewId, $fresh->sessionId, $fresh->viewerId, $fresh->videoId,
+            $fresh->context, ['errorType' => 'x', 'errorMessage' => 'y', 'fatal' => true, 'errorSeverity' => 'fatal', 'reconnectExhausted' => true],
+            ['stalled' => true],
+            bodyHash: $fresh->bodyHash,
+        );
+        $serialized = str_replace('s:13:"serialVersion";i:3;', 's:13:"serialVersion";i:2;', serialize($old));
+        expect($serialized)->toContain('s:13:"serialVersion";i:2;');
+
+        ($this->deliver)(Beacons::payload('viewStart'), unserialize($serialized));
+
+        expect(DB::table('scarlett_view_errors')->sole()->stalled)->toBe(1);
     });
 
     it('never captures a pipeline dimension named startState', function (): void {

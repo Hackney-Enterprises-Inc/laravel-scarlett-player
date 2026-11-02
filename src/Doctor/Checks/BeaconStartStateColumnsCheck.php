@@ -51,7 +51,7 @@ class BeaconStartStateColumnsCheck implements Check
         }
 
         if ($missing !== []) {
-            return CheckResult::warn('Missing start state columns: '.implode(', ', $missing).'. Ingest keeps working but skips the view\'s start_state and the error row\'s stalled flag; both stay readable in the raw log and the custom dimensions. On existing tables publish only --tag=scarlett-migrations-startstate, migrate, then restart queue workers. Fresh installs use scarlett-migrations.');
+            return CheckResult::warn('Missing start state columns: '.implode(', ', $missing).'. Ingest keeps working but skips the view\'s start_state and the error row\'s stalled flag. They are known fields, not custom dimensions, so until the migration runs they survive only in the raw event log (beacons.store_raw_events on, event not in beacons.raw_events_except). On existing tables publish only --tag=scarlett-migrations-startstate, migrate, then restart queue workers. Fresh installs use scarlett-migrations.');
         }
 
         return CheckResult::pass('all beacon start state columns exist');

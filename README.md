@@ -578,8 +578,11 @@ Reading rebuffering and QoE honestly (HEI-LSP-13):
   clamps to 1; `rebuffer_ratio` still holds out-of-range values sent by player 1.22.
 - Count playback only where there was playback: filter `play_ms > 0` for averages of
   play-based figures, and use `start_state` (below) to size the views that never played.
-  The player scores a view that never showed a frame near 100, so an unfiltered
-  `AVG(qoe_score)` flatters the player by the share of never-played views.
+  Player 1.26 and earlier (QoE v1 and v2) scored a view that never showed a frame near
+  100, so an unfiltered `AVG(qoe_score)` over those versions flatters the player by the
+  share of never-played views. Player 1.27 (QoE v3) scores such a view 0 or null, so a v3
+  average no longer carries that inflation, but it still mixes in views that never played;
+  filter `play_ms > 0` (or group by `start_state`) when you want playback quality alone.
 - Never average `qoe_score` across `qoe_version` values: group by version, as above.
 
 #### Player 1.22 and upgrading from 0.4
@@ -776,7 +779,8 @@ php artisan queue:restart
 
 Fresh installs publish only `scarlett-migrations`. Until the migration runs, ingest keeps
 working and skips the two columns, and `scarlett:doctor` warns (`beacon start state
-columns`); both fields stay in the custom dimensions and the raw log meanwhile. Existing
+columns`). Both are known fields, not custom dimensions, so meanwhile they survive only in the
+raw event log (`beacons.store_raw_events` on, event not in `beacons.raw_events_except`). Existing
 rows are not rewritten. A job queued by 0.9.x still fills the new columns after the
 upgrade, and a beacon redelivered across it keeps its event key.
 
