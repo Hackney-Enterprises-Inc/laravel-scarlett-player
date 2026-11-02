@@ -13,7 +13,7 @@ use Symfony\Component\Process\Process;
 
 /*
  * The two-origin beacon test: the real analytics plugin from the
- * pinned @scarlett-player/embed 1.26.0 bundle, in Chromium, beaconing cross-origin to
+ * pinned @scarlett-player/embed 1.27.0 bundle, in Chromium, beaconing cross-origin to
  * this package's ingest over HTTPS, with beacons.key set and apiKey configured in
  * every case.
  *
@@ -188,7 +188,7 @@ beforeEach(function (): void {
 
     Route::get('/scarlett-browser/page', fn () => response(corsPage($this->proxyAddress), 200, ['Content-Type' => 'text/html; charset=utf-8']));
     Route::get('/scarlett-browser/away', fn () => response('<!doctype html><title>away</title>', 200, ['Content-Type' => 'text/html']));
-    Route::get('/scarlett-browser/embed.umd.cjs', fn () => response()->file($fixtures.'/1.26.0/embed.umd.cjs', ['Content-Type' => 'application/javascript']));
+    Route::get('/scarlett-browser/embed.umd.cjs', fn () => response()->file($fixtures.'/1.27.0/embed.umd.cjs', ['Content-Type' => 'application/javascript']));
     // VP9/WebM, not H.264: headless Chromium has no proprietary codecs, and from 1.17.0
     // the player refuses an mp4 it cannot play with a fatal error, whose viewEnd
     // (exitType error, sent by fetch) ends the view before the unload path runs.
@@ -273,18 +273,26 @@ it('receives the unload viewEnd with the key from ?api_key= under the credential
 
     expect($view->ended_at)->not->toBeNull()
         ->and($view->exit_type)->toBe('abandoned')
-        ->and($view->player_version)->toBe('1.26.0')
+        ->and($view->player_version)->toBe('1.27.0')
         ->and(DB::table('scarlett_beacon_events')->where('event', 'viewEnd')->count())->toBe(1);
 
     // Player 1.22.0: the unload viewEnd carries the full field set (no longer a subset),
     // and a native source that never reports a bitrate sends null, not 0.
     $raw = json_decode((string) DB::table('scarlett_beacon_events')->where('event', 'viewEnd')->value('payload'), true);
     expect($raw)->toHaveKeys(['qoeScore', 'qoeVersion', 'rebufferRatio', 'completionRate', 'pauseDuration', 'seekCount', 'elementSeekCount', 'reconnectCount', 'reconnectDuration', 'warningCount'])
-        ->and($raw['qoeVersion'])->toBe(2)
+        ->and($raw['qoeVersion'])->toBe(3)
         ->and($raw)->not->toHaveKeys(['avgBitrate', 'maxBitrate'])
         ->and($view->avg_bitrate)->toBeNull()
         ->and($view->max_bitrate)->toBeNull()
         ->and((int) $view->reconnect_count)->toBe(0);
+
+    // Player 1.27.0: the unload viewEnd says why the view did or did not play. The page
+    // never asks the player to play, so this is the real 'never' state, and QoE v3 gives
+    // such a view no score (null), not the near-100 an older player gave it.
+    expect($raw['startState'])->toBe('never')
+        ->and($view->start_state)->toBe('never')
+        ->and($raw['qoeScore'])->toBeNull()
+        ->and($view->qoe_score)->toBeNull();
 
     // Player 1.23.0 and later: the unload viewEnd says its gauges are percentages, and
     // the canonical gauge columns are stamped by it.

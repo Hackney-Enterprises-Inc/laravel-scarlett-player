@@ -15,8 +15,9 @@ use Illuminate\Support\Facades\Schema;
  * Why a view never played (0.10.0): the playBlocked beacon, the viewEnd startState
  * and the stalled flag on the terminal error of the player's stall ceiling. The
  * player names are in its analytics types.ts: StartState, BeaconPayload.stalled,
- * AnalyticsEventType 'playBlocked'. Wire fixtures for these are not captured (the
- * capture harness's Chromium allows autoplay), so the bodies here are built by hand.
+ * AnalyticsEventType 'playBlocked'. The real wire capture is wire/1.27.0, replayed by
+ * Player127Test; the bodies here are built by hand because they cover what a capture
+ * cannot: an older schema, a job queued by 0.9.x, hostile values and the 'never' state.
  */
 
 function startStateMigration(): object

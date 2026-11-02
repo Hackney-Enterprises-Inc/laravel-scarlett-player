@@ -6,7 +6,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.10.0] - Unreleased
 
-Upgrading from 0.9: update the package, then `php artisan vendor:publish --tag=scarlett-migrations-startstate`, `php artisan migrate` and `php artisan queue:restart`. Fresh installs publish only `scarlett-migrations`. Until the migration runs, ingest keeps working and skips the new columns, and `scarlett:doctor` warns. Rows already stored are not rewritten. `player.player_version` stays 1.26.0: player 1.27.0 sends these fields, and the pin moves to it in a following release once it is on the CDN and its embed attributes are verified.
+Upgrading from 0.9: update the package, then `php artisan vendor:publish --tag=scarlett-migrations-startstate`, `php artisan migrate` and `php artisan queue:restart`. Fresh installs publish only `scarlett-migrations`. Until the migration runs, ingest keeps working and skips the new columns, and `scarlett:doctor` warns. Rows already stored are not rewritten. Move the host's `@scarlett-player/*` packages to 1.27.0 with the package update, which is also the new default `player.player_version`; set `SCARLETT_PLAYER_VERSION=1.26.0` to stay on the old bundle.
 
 ### Added
 
@@ -19,6 +19,9 @@ Upgrading from 0.9: update the package, then `php artisan vendor:publish --tag=s
 
 ### Changed
 
+- Pinned to player 1.27.0: `player.player_version` defaults to `1.27.0` (was `1.26.0`), so embed mode loads the CDN's `v1.27.0/` bundle and its addons as soon as the package deploys, unless the host pins another version. Verified against the published npm 1.27.0 embed, chapters, share, captions and core packages: the embed attribute README, `normaliseChapters()`, `buildEmbedSnippet()`, `Chapter` and `CaptionSource` are byte-identical to 1.26.0. All 14 `.js`, `.cjs` files the CDN serves under `v1.27.0/` (`embed.js`, `embed.umd.cjs`, the chapters and clips addons in both formats, the audio and video builds, `hls.1.27.0.js` and `hls.light.1.27.0.js`) were compared with the npm tarball and are byte-identical.
+- Fixtures: a fresh 1.27.0 wire capture (`tests/Fixtures/wire/1.27.0/`, 35 files, replayed through the route by `Player127Test`) that includes the new beacons (`playBlocked`, the awaiting-tap `viewEnd`, the stalled error and its `viewEnd`); the embed attribute, chapters, share and browser-bundle fixtures moved to 1.27.0 with their provenance. The 1.26.0 wire set is retained. The browser test now asserts the real `never` start state of its page, which never asks to play. The hand-built `StartStateTest` cases stay for what a capture cannot show: an older schema, a job queued by 0.9.x, hostile values and the `never` state (which the capture does not produce, though the browser test's page does).
+- Readers of player 1.27.0 (QoE v3): a view that never showed a first frame now scores 0 when it asked to play and got none, and null when it never asked or is waiting for a tap (older players scored it near 100). Running heartbeats before the first frame carry a null score. Compare v3 as its own series; its average is lower than v2's for the same traffic.
 - `BeaconPayload` serializes with classification version 3. `startState` and `stalled` were custom dimensions in 0.9.x and keep their place in the deduplication hash, so a beacon redelivered across the upgrade has the same event key. A job queued by 0.9.x (or earlier) still fills the new columns, because `knownValue()` captures both names from its custom dimensions.
 - Readers of the new player release: a `pause` beacon follows `playRequest` on a blocked play (the browser's own pause event after the refused `play()`); it is not a viewer action.
 

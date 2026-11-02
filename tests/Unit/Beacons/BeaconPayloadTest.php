@@ -124,7 +124,7 @@ it('knows every key the analytics plugin sends through player 1.25.0 and the sta
         // 1.25.0: the transport's dispatch time and the view's frame totals. The live
         // seekable window stays a custom dimension, merged on the view row.
         'sentAt', 'decodedFramesTotal', 'droppedFramesTotal',
-        // The player release after 1.26.0: why a view never played and the stall ceiling's
+        // Player 1.27.0: why a view never played and the stall ceiling's
         // terminal error. playBlocked's reason and errorName stay custom dimensions.
         'startState', 'stalled',
     ];

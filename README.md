@@ -750,10 +750,10 @@ they change nothing in the stored data.
 
 #### Why a view never played, and upgrading from 0.9
 
-Package 0.10.0 ingests three things player 1.27.0 sends (the pin, `player.player_version`,
-stays **1.26.0** in this release and moves in a following one once 1.27.0 is on the CDN and
-its embed attributes are verified; ingest works with any player, the fields simply stay
-empty until it sends them):
+Package 0.10.0 ingests three things player 1.27.0 sends, and moves the default
+`player.player_version` to **1.27.0** (from 1.26.0), so embed mode loads the CDN's `v1.27.0/`
+bundle as soon as the package deploys; set `SCARLETT_PLAYER_VERSION=1.26.0` to stay on the old
+bundle. Ingest works with any player: the fields simply stay empty until it sends them):
 
 - `viewEnd.startState` is stored in `scarlett_views.start_state`, set once. It says how a
   view started: `played` (a first frame was shown), `awaitingTap` (the browser refused
@@ -1729,7 +1729,7 @@ This table is generated from `Hei\ScarlettPlayer\Player\FeatureMatrix`, the same
 builder enforces (`FeatureMatrix::toMarkdown()`; a test fails if the two differ). A cell
 reading "from player X" is checked against `player.player_version`: below it, asking for that
 feature in embed mode throws `UnsupportedInEmbedMode`, which names the module-mode
-alternative. On the default 1.26.0 (from 1.17.0), embed mode carries clips, chapters and captions; chapters
+alternative. On the default 1.27.0 (from 1.17.0), embed mode carries clips, chapters and captions; chapters
 and clips need the embed's addon files, which the component loads for you.
 
 ### Config builder
@@ -2112,7 +2112,7 @@ falls through to the bound resolver.
 | `v0.8.0` | 1.22.x through 1.25.x, pinned at 1.25.0 (`player.player_version`, was 1.24.0) | `tests/Fixtures/wire/1.25.0/` (captured by the player harness at 1.25.0) | Verified against the published npm 1.25.0 embed, chapters, share, captions and core packages and the CDN `v1.25.0/` files (byte-identical to npm); the browser test runs the npm 1.25.0 embed bundle. `sentAt` is a known field, kept in the raw log and left out of `custom` and the deduplication hash; the live seek window is a custom dimension. Startup and rebuffer readings rise against 1.24 (frame-based `videoStart`, frozen-picture rebuffers), and load timeouts reconnect. Additive diagnostics migration (`scarlett-migrations-diagnostics`): monotonic `decoded_frames_total` / `dropped_frames_total` and the indexed `viewer_ref`, copied from the server context (`beacons.viewer_ref_key`); `scarlett:views:inspect` for support lookups. The embed attribute names, the `Chapter`/`CaptionSource` shapes, the addon file names and the share snippet are unchanged from 1.24.0 |
 | `v0.9.0` | Still pinned at 1.25.0 (`player.player_version`); built for player 1.26.0 | 1.25.0 set retained | Clock-skew correction at ingest: every `*_at` column is the beacon's `timestamp` shifted by (request time minus `sentAt`), `received_at` is the request time, and the viewer's own time and the shift are kept. Additive clock migration (`scarlett-migrations-clock`); `beacons.max_clock_offset`; `beacon clock columns` doctor check. Player 1.26.0 adds `queuedForMs` (a custom dimension) and nothing else the ingest must know. The pin moves once 1.26.0 is on the CDN |
 | `v0.9.1` | 1.22.x through 1.26.x, pinned at 1.26.0 (`player.player_version`, was 1.25.0) | `tests/Fixtures/wire/1.26.0/` (captured by the player harness at 1.26.0; the 1.25.0 set is retained) | Verified against the published npm 1.26.0 embed, chapters, share, captions and core packages: the embed attribute README, `normaliseChapters()`, `buildEmbedSnippet()`, `Chapter` and `CaptionSource` are byte-identical to 1.25.0, and the browser test runs the npm 1.26.0 embed bundle. 1.26.0 adds `queuedForMs` (a custom dimension, stored in `custom` and the raw log) on events tracked before the analytics plugin initialised, and the player now ignores the page-teardown `Media source not supported` element error, so fewer warnings are reported by iOS views. No migration, no config change except the new default pin |
-| `v0.10.0` | Still pinned at 1.26.0 (`player.player_version`); built for player 1.27.0, which adds `playBlocked`, `startState` and `stalled` | 1.26.0 set retained | `startState` on `viewEnd` (`scarlett_views.start_state`, set once), the `playBlocked` raw event, and `stalled` on the terminal error of the player's stall ceiling (`scarlett_view_errors.stalled`). Additive start state migration (`scarlett-migrations-startstate`); `beacon start state columns` doctor check. No wire fixture is captured for the new fields (the player harness's browser allows autoplay), so the tests build the bodies by hand. The pin moves to 1.27.0 once it is on the CDN and its embed attributes are verified |
+| `v0.10.0` | 1.22.x through 1.27.x, pinned at 1.27.0 (`player.player_version`, was 1.26.0) | `tests/Fixtures/wire/1.27.0/` (captured by the player harness at 1.27.0; the 1.26.0 set is retained) | Verified against the published npm 1.27.0 embed, chapters, share, captions and core packages and the CDN `v1.27.0/` files (all 14, byte-identical to npm): the embed attribute README, `normaliseChapters()`, `buildEmbedSnippet()`, `Chapter` and `CaptionSource` are byte-identical to 1.26.0, and the browser test runs the npm 1.27.0 embed bundle. `startState` on `viewEnd` (`scarlett_views.start_state`, set once), the `playBlocked` raw event, and `stalled` on the terminal error of the player's stall ceiling (`scarlett_view_errors.stalled`). Player 1.27.0 scores QoE v3: a view that never showed a first frame is 0 (it asked to play) or null (it never asked, or awaits a tap), so a v3 average is lower than a v2 one. Additive start state migration (`scarlett-migrations-startstate`); `beacon start state columns` doctor check; `Player127Test` replays the real capture |
 
 Player 1.19.3's `rebufferGraceMs: 0` restores immediate rebuffer counting. Its
 `rebufferStart.timestamp` is the send time, not backdated to the first `waiting`;
@@ -2133,12 +2133,12 @@ The 1.19.3 and `1.22.0-derived` beacon fixtures are derived from the analytics s
 and explicitly marked `derived (recapture owed)`; they do not claim a captured transport
 (the 1.22.0 set was re-verified against the published source). The share-built embed
 iframe fixture is also derived: it is generated by the share plugin's own snippet
-builder, taken byte for byte from the published 1.26.0 dist (its `buildEmbedSnippet()` is
+builder, taken byte for byte from the published 1.27.0 dist (its `buildEmbedSnippet()` is
 identical to 1.22.0), because the capture harness has no share scenario.
 
 The embed bundle location follows `player.embed_bundle`, a template defaulting to
 `{cdn_url}/v{player_version}/embed.js`: the player CDN serves one directory per release
-(for example, `v1.26.0/`) and no `/latest/` alias yet, so the embed bundle is always the pinned version.
+(for example, `v1.27.0/`) and no `/latest/` alias yet, so the embed bundle is always the pinned version.
 
 ## Development
 
