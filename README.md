@@ -1190,9 +1190,9 @@ startup, rebuffers, reconnects, dropped frames, gauges, the server and custom ma
 errors (severity, category, code, HTTP status, source host, message) and its raw beacon
 timeline (`--events`, the newest 100 by default). For player 1.25 and later the timeline
 shows each beacon's stored time minus its `sentAt`, with the median per view: network time
-plus how far the viewer's clock is off. It is the gap 0.9.0 corrects by when the beacon was
-corrected (`clock_source` `sentAt`); with the correction off or the offset rejected the
-stamps are unshifted. A beacon without a controller receipt time (queued by 0.8.0, or stored
+plus how far the viewer's clock is off. A non-null `clock_offset_ms` on the raw event means
+0.9.0 corrected that beacon; `clock_source` describes only the beacon that created the view.
+With the correction off or the offset rejected, the stamps are unshifted. A beacon without a controller receipt time (queued by 0.8.0, or stored
 before 0.9.0) includes the beacons queue wait as well, because its `received_at` is the time
 the queued job ran. The timeline needs `beacons.store_raw_events`; the
 command names any events `beacons.raw_events_except` leaves out (leaving out `heartbeat`

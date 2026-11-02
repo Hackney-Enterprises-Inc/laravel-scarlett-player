@@ -25,10 +25,11 @@ use Throwable;
  * The timeline shows each beacon's client time, the time the store wrote it and,
  * for player 1.25.0 and later, the gap between that and the browser's `sentAt`:
  * network time plus how far the viewer's clock is off. Since 0.9.0 received_at is
- * the HTTP request time, and when the correction applied (clock_source `sentAt`)
- * occurred_at was shifted by this gap. It is a gap, not always an applied
- * correction: with the correction off or the offset rejected, occurred_at is
- * unshifted. A beacon without a controller receipt time (queued by 0.8.0) carries
+ * the HTTP request time, and when the correction applied (a non-null
+ * clock_offset_ms on the raw event; clock_source describes only the beacon that
+ * created the view) occurred_at was shifted by this gap. It is a gap, not always
+ * an applied correction: with the correction off or the offset rejected,
+ * occurred_at is unshifted. A beacon without a controller receipt time (queued by 0.8.0) carries
  * the queue wait in it as well. Read only; only the tables EloquentBeaconStore
  * writes.
  */
