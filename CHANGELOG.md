@@ -4,7 +4,7 @@ All notable changes to `hei/laravel-scarlett-player` are documented here. The fo
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.9.1] - Unreleased
+## [0.9.1] - 2026-11-02
 
 No migration and no ingest change. Move the host's `@scarlett-player/*` packages to 1.26.0 with the package update, or set `SCARLETT_PLAYER_VERSION=1.25.0` to stay on the old bundle.
 
@@ -14,7 +14,9 @@ No migration and no ingest change. Move the host's `@scarlett-player/*` packages
 - Fixtures: a fresh 1.26.0 wire capture (`tests/Fixtures/wire/1.26.0/`, 31 files, replayed through the route by `Player126Test`); the embed attribute, chapters, share and browser-bundle fixtures moved to 1.26.0 with their provenance. The 1.25.0 wire set is retained.
 - README: "Player 1.26" and the `v0.9.1` compatibility row.
 
-## [0.9.0] - Unreleased
+## [0.9.0] - 2026-11-02
+
+Never tagged on its own: it shipped in v0.9.1.
 
 Upgrading from 0.8: update the package, then `php artisan vendor:publish --tag=scarlett-migrations-clock`, `php artisan migrate` and `php artisan queue:restart`. Fresh installs publish only `scarlett-migrations`. Until the migration runs, ingest keeps working and skips the new columns, and `scarlett:doctor` warns. Rows already stored are not rewritten, and a view in flight at the upgrade has raw stamps before it and corrected ones after.
 
