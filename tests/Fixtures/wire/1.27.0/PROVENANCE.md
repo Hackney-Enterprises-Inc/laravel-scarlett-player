@@ -35,3 +35,6 @@ to play and showed no frame without an error.
 
 The harness manifest (`manifest.json`) records every captured file, the selected
 scenarios and each assertion.
+One assertion in it is named "QoE v2 on heartbeat and both viewEnd transports". That is a
+mislabel: the check asserts `qoeVersion` 3 (the harness now names it "QoE v3 ..."). The manifest
+is left as the 1.27.0 run printed it and is corrected by the next recapture.
