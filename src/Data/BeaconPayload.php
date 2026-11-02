@@ -44,9 +44,11 @@ final readonly class BeaconPayload
     /**
      * Known-typed values of names promoted since the job was queued, captured from
      * $custom once, when a payload serialized by an older package (no SERIAL_VERSION
-     * marker) is restored. Uninitialized on every other payload. Carried unchanged
-     * through the with*() methods, so neither a pipeline's withCustom() nor
-     * withServer() ownership adds or removes one. Read only by knownValue().
+     * marker) is restored. Uninitialized on every other payload. withCustom() keeps a
+     * value only while the map it is given still holds that name with a valid type
+     * (the replacement wins), so a pipeline can redact one by removing or retyping it
+     * there; withServer() ownership neither adds nor removes one. Read only by
+     * knownValue().
      *
      * Deliberately not set by the constructor, whose public signature stays as it
      * was: PHP lets the class initialize a readonly property once from its own scope
@@ -519,11 +521,23 @@ final readonly class BeaconPayload
      */
     public function withCustom(array $custom): self
     {
+        $custom = array_diff_key($custom, array_flip($this->owned));
+
+        // A restored value was captured from the custom dimensions, so the map the
+        // pipeline hands back decides it: removed or retyped there, it is redacted.
+        $legacy = [];
+
+        foreach ($this->legacyKnown ?? [] as $key => $_) {
+            if (isset(self::FIELDS[$key]) && self::isType($custom[$key] ?? null, self::FIELDS[$key])) {
+                $legacy[$key] = self::field($custom[$key]);
+            }
+        }
+
         return (new self(
             $this->event, $this->timestamp, $this->viewId, $this->sessionId, $this->viewerId,
-            $this->videoId, $this->context, $this->fields, array_diff_key($custom, array_flip($this->owned)),
+            $this->videoId, $this->context, $this->fields, $custom,
             $this->ip, $this->server, $this->owned, $this->bodyHash,
-        ))->carryLegacy($this);
+        ))->carryLegacy($this, legacy: isset($this->legacyKnown) ? $legacy : null);
     }
 
     /**
@@ -765,10 +779,18 @@ final readonly class BeaconPayload
         }
     }
 
-    /** Give a with*() copy this payload's captured legacy values and gauge provenance, if it has any. */
-    private function carryLegacy(self $from, bool $receivedAt = true): self
+    /**
+     * Give a with*() copy this payload's captured legacy values and gauge provenance, if it has any.
+     *
+     * @param  array<string, int|float|string|bool>|null  $legacy  the values to carry instead of $from's
+     */
+    private function carryLegacy(self $from, bool $receivedAt = true, ?array $legacy = null): self
     {
-        if (isset($from->legacyKnown)) {
+        if ($legacy !== null) {
+            if ($legacy !== []) {
+                $this->legacyKnown = $legacy; // @phpstan-ignore property.readOnlyAssignNotInConstructor
+            }
+        } elseif (isset($from->legacyKnown)) {
             $this->legacyKnown = $from->legacyKnown; // @phpstan-ignore property.readOnlyAssignNotInConstructor
         }
 

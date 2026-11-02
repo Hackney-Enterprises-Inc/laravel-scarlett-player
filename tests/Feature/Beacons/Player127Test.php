@@ -118,6 +118,7 @@ it('stores the captured stall ceiling as a stalled error row and a played view t
         ->and($view->start_state)->toBe('played')
         ->and($view->exit_type)->toBe('error')
         // An error exit scores 0 under QoE v3.
+        ->and($view->qoe_score)->not->toBeNull()
         ->and((float) $view->qoe_score)->toBe(0.0);
 });
 

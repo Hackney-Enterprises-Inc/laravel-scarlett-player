@@ -224,7 +224,36 @@ describe('jobs queued across the upgrade', function (): void {
 
         ($this->deliver)(Beacons::payload('viewStart'), unserialize($serialized));
 
-        expect(DB::table('scarlett_view_errors')->sole()->stalled)->toBe(1);
+        expect((bool) DB::table('scarlett_view_errors')->sole()->stalled)->toBeTrue();
+    });
+
+    it('honors a pipeline that removes a restored value from the custom dimensions', function (): void {
+        $redacted = queuedBy09()->withCustom(['tenant' => 'wire']);
+
+        expect($redacted->knownValue('startState'))->toBeNull();
+
+        ($this->deliver)($redacted);
+
+        expect(($this->view)()->start_state)->toBeNull();
+    });
+
+    it('stores the value a pipeline replaced a restored one with, not the queued original', function (): void {
+        $redacted = queuedBy09()->withCustom(['startState' => 'redacted', 'tenant' => 'wire']);
+
+        ($this->deliver)($redacted);
+
+        expect(($this->view)()->start_state)->toBe('redacted');
+    });
+
+    it('drops a restored value a pipeline replaced with the wrong type', function (): void {
+        expect(queuedBy09()->withCustom(['startState' => ['x']])->knownValue('startState'))->toBeNull();
+    });
+
+    it('keeps a restored value when the pipeline hands the custom dimensions back unchanged', function (): void {
+        $restored = queuedBy09();
+
+        expect($restored->withCustom($restored->custom)->knownValue('startState'))->toBe('awaitingTap')
+            ->and(unserialize(serialize($restored->withCustom([])))->knownValue('startState'))->toBeNull();
     });
 
     it('never captures a pipeline dimension named startState', function (): void {
