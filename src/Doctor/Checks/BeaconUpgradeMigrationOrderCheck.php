@@ -26,12 +26,15 @@ class BeaconUpgradeMigrationOrderCheck implements Check
 
     private const ERRORS = '_create_scarlett_view_errors_table';
 
+    private const EVENTS = '_create_scarlett_beacon_events_table';
+
     /** Upgrade name suffix => [publish tag, the create migrations it depends on]. */
     private const UPGRADES = [
         '_add_signals_to_scarlett_tables' => ['scarlett-migrations-signals', [self::VIEWS, self::ERRORS]],
         '_add_reconnects_to_scarlett_tables' => ['scarlett-migrations-reconnects', [self::VIEWS, self::ERRORS]],
         '_add_gauges_to_scarlett_tables' => ['scarlett-migrations-gauges', [self::VIEWS]],
         '_add_diagnostics_to_scarlett_tables' => ['scarlett-migrations-diagnostics', [self::VIEWS]],
+        '_add_clock_correction_to_scarlett_tables' => ['scarlett-migrations-clock', [self::VIEWS, self::EVENTS, self::ERRORS]],
     ];
 
     public function __construct(private readonly Container $container) {}
@@ -54,7 +57,7 @@ class BeaconUpgradeMigrationOrderCheck implements Check
             return CheckResult::warn('could not list the registered migrations: '.$e->getMessage());
         }
 
-        $creates = array_values(array_filter($names, fn (string $name): bool => $this->endsWithAny($name, [self::VIEWS, self::ERRORS])));
+        $creates = array_values(array_filter($names, fn (string $name): bool => $this->endsWithAny($name, [self::VIEWS, self::ERRORS, self::EVENTS])));
 
         if ($creates === []) {
             return CheckResult::pass('no scarlett create migration in the registered migration paths');
@@ -74,7 +77,7 @@ class BeaconUpgradeMigrationOrderCheck implements Check
         }
 
         if ($misplaced !== []) {
-            return CheckResult::warn(implode('; ', $misplaced).'. A fresh migrate runs it before the table exists and stops. A database that already ran it is fine. Delete the copy if another copy sorts after the creates (a full scarlett-migrations publish from 0.4.0 contains the signals upgrade, from 0.5.0 the reconnects one, from 0.6.0 the gauges one, from 0.8.0 the diagnostics one); otherwise delete a fixed 0001_01_01_ name and publish its tag again, or rename a dated copy to sort after the create migrations.');
+            return CheckResult::warn(implode('; ', $misplaced).'. A fresh migrate runs it before the table exists and stops. A database that already ran it is fine. Delete the copy if another copy sorts after the creates (a full scarlett-migrations publish from 0.4.0 contains the signals upgrade, from 0.5.0 the reconnects one, from 0.6.0 the gauges one, from 0.8.0 the diagnostics one, from 0.9.0 the clock one); otherwise delete a fixed 0001_01_01_ name and publish its tag again, or rename a dated copy to sort after the create migrations.');
         }
 
         return CheckResult::pass('every scarlett upgrade migration sorts after the create migrations');

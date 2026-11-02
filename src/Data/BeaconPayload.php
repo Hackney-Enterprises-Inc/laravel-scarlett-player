@@ -70,6 +70,14 @@ final readonly class BeaconPayload
     private array $gaugeNulls; // @phpstan-ignore property.uninitializedReadonly
 
     /**
+     * When the server received the beacon, epoch milliseconds, stamped by the
+     * controller. Uninitialized on a payload built elsewhere and on a job queued
+     * before 0.9.0: both mean "no receipt time", so no clock correction is made.
+     * Never part of the hash basis or the stored payload. Read through receivedAtMs().
+     */
+    private int $receivedAtMs; // @phpstan-ignore property.uninitializedReadonly
+
+    /**
      * Written by __serialize(). A serialized payload without it, or with an older
      * version, was queued by an older package, whose classification may have left
      * promoted names in custom: none before 0.5.0, version 1 from 0.5.0 to 0.7.x,
@@ -393,6 +401,32 @@ final readonly class BeaconPayload
         return $this->fields[$key] ?? $this->context[$key] ?? null;
     }
 
+    /**
+     * When the server received the beacon (epoch milliseconds), or null when the
+     * payload was not stamped at the request (built by hand, or queued before 0.9.0).
+     */
+    public function receivedAtMs(): ?int
+    {
+        return $this->receivedAtMs ?? null;
+    }
+
+    /**
+     * The same beacon stamped with the time the server received it. Used by the
+     * controller; the body hash is unchanged.
+     */
+    public function withReceivedAt(int $milliseconds): self
+    {
+        $copy = (new self(
+            $this->event, $this->timestamp, $this->viewId, $this->sessionId, $this->viewerId,
+            $this->videoId, $this->context, $this->fields, $this->custom, $this->ip, $this->server,
+            $this->owned, $this->bodyHash,
+        ))->carryLegacy($this, receivedAt: false);
+
+        $copy->receivedAtMs = $milliseconds; // @phpstan-ignore property.readOnlyAssignNotInConstructor
+
+        return $copy;
+    }
+
     public function has(string $key): bool
     {
         return array_key_exists($key, $this->fields) || array_key_exists($key, $this->context);
@@ -704,10 +738,15 @@ final readonly class BeaconPayload
         if ($gaugeNulls !== []) {
             $this->gaugeNulls = array_values(array_unique($gaugeNulls));
         }
+
+        // A queue written before 0.9.0 has no receipt time and gets none.
+        if (isset($data['receivedAtMs']) && is_int($data['receivedAtMs'])) {
+            $this->receivedAtMs = $data['receivedAtMs'];
+        }
     }
 
     /** Give a with*() copy this payload's captured legacy values and gauge provenance, if it has any. */
-    private function carryLegacy(self $from): self
+    private function carryLegacy(self $from, bool $receivedAt = true): self
     {
         if (isset($from->legacyKnown)) {
             $this->legacyKnown = $from->legacyKnown; // @phpstan-ignore property.readOnlyAssignNotInConstructor
@@ -715,6 +754,10 @@ final readonly class BeaconPayload
 
         if (isset($from->gaugeNulls)) {
             $this->gaugeNulls = $from->gaugeNulls; // @phpstan-ignore property.readOnlyAssignNotInConstructor
+        }
+
+        if ($receivedAt && isset($from->receivedAtMs)) {
+            $this->receivedAtMs = $from->receivedAtMs; // @phpstan-ignore property.readOnlyAssignNotInConstructor
         }
 
         return $this;

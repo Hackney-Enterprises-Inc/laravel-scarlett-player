@@ -8,6 +8,7 @@ use Hei\ScarlettPlayer\Beacons\GaugeNormalizer;
 use Hei\ScarlettPlayer\Contracts\BeaconStore;
 use Hei\ScarlettPlayer\Contracts\ResolvesMedia;
 use Hei\ScarlettPlayer\Data\BeaconPayload;
+use Hei\ScarlettPlayer\Data\ClockCorrection;
 use Hei\ScarlettPlayer\Events\PlaybackErrorReported;
 use Hei\ScarlettPlayer\Events\ViewEnded;
 use Hei\ScarlettPlayer\Events\ViewStarted;
@@ -265,6 +266,13 @@ class EloquentBeaconStore implements BeaconStore
         ],
     ];
 
+    /** Columns added by the clock-skew upgrade (migration 9), also checked by doctor. */
+    public const CLOCK_COLUMNS = [
+        self::VIEWS => ['clock_offset_ms', 'clock_source'],
+        self::EVENTS => ['client_occurred_at', 'clock_offset_ms'],
+        self::ERRORS => ['client_occurred_at', 'clock_offset_ms'],
+    ];
+
     /**
      * Wire gauge key => [canonical ratio column, its stamp]. The legacy LATEST
      * columns keep the received wire values; these hold the normalized 0..1
@@ -314,7 +322,13 @@ class EloquentBeaconStore implements BeaconStore
             $this->seqColumn ??= $connection->getSchemaBuilder()->hasColumn(self::EVENTS, 'seq');
         }
 
-        foreach ($payload->event === 'error' ? [self::VIEWS, self::ERRORS] : [self::VIEWS] as $table) {
+        $tables = $payload->event === 'error' ? [self::VIEWS, self::ERRORS] : [self::VIEWS];
+
+        if ($this->config->get('scarlett-player.beacons.store_raw_events') && ! $this->rawEventExcluded($payload->event)) {
+            $tables[] = self::EVENTS;
+        }
+
+        foreach ($tables as $table) {
             $this->signalColumns[$table] ??= array_fill_keys($connection->getSchemaBuilder()->getColumnListing($table), true);
         }
 
@@ -352,6 +366,9 @@ class EloquentBeaconStore implements BeaconStore
         $fired = [];
         $key = self::eventKey($payload);
         $now = $this->serverNow();
+        $clock = $this->clock($payload);
+        $occurredAt = $this->stampTime($payload);
+        $receivedAt = $this->receivedAt($payload, $now);
 
         // Lock first on MySQL and Postgres: an INSERT IGNORE that hits the existing row
         // takes a shared lock on InnoDB, and two workers holding S on one view both then
@@ -368,9 +385,10 @@ class EloquentBeaconStore implements BeaconStore
                 'view_id' => $payload->viewId,
                 'event' => $payload->event,
                 'event_key' => $key,
-                'occurred_at' => self::clientTime($payload->timestamp),
+                'occurred_at' => $occurredAt,
                 'payload' => json_encode($payload->toArray(), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
-                'received_at' => $now,
+                'received_at' => $receivedAt,
+                ...$this->supportedSignals($this->clockColumns($payload, $clock), self::EVENTS),
             ];
 
             $seq = $payload->get('beaconSeq');
@@ -386,11 +404,11 @@ class EloquentBeaconStore implements BeaconStore
             $connection->table(self::EVENTS)->insertOrIgnore($row);
         }
 
-        if ($payload->event === 'error' && $this->insertError($connection, $payload, $key, $now)) {
+        if ($payload->event === 'error' && $this->insertError($connection, $payload, $key, $receivedAt, $clock)) {
             $fired[] = new PlaybackErrorReported($payload->viewId, $payload);
         }
 
-        if (! $exists && $connection->table(self::VIEWS)->insertOrIgnore($this->insertRow($connection, $payload, $now)) === 1) {
+        if (! $exists && $connection->table(self::VIEWS)->insertOrIgnore($this->insertRow($connection, $payload, $now, $clock)) === 1) {
             $fired[] = new ViewStarted($payload->viewId, $payload);
 
             if ($payload->event === 'viewEnd') {
@@ -404,7 +422,7 @@ class EloquentBeaconStore implements BeaconStore
             $ended = $connection->table(self::VIEWS)
                 ->where('view_id', $payload->viewId)
                 ->whereNull('ended_at')
-                ->update(['ended_at' => self::clientTime($payload->timestamp)]);
+                ->update(['ended_at' => $occurredAt]);
 
             if ($ended === 1) {
                 $fired[] = new ViewEnded($payload->viewId, $payload);
@@ -421,11 +439,12 @@ class EloquentBeaconStore implements BeaconStore
      *
      * @return array<string, mixed>
      */
-    private function insertRow(Connection $connection, BeaconPayload $payload, string $now): array
+    private function insertRow(Connection $connection, BeaconPayload $payload, string $now, ClockCorrection $clock): array
     {
-        $at = self::clientTime($payload->timestamp);
+        $at = $this->stampTime($payload);
 
         $row = [
+            ...$this->supportedSignals(['clock_offset_ms' => $clock->offsetMs, 'clock_source' => $clock->source]),
             'view_id' => $payload->viewId,
             'session_id' => $payload->sessionId,
             'viewer_id' => $payload->viewerId,
@@ -494,7 +513,7 @@ class EloquentBeaconStore implements BeaconStore
         $grammar = $connection->getQueryGrammar();
         $table = $grammar->wrapTable(self::VIEWS);
         $col = fn (string $column): string => $table.'.'.$grammar->wrap($column);
-        $at = self::clientTime($payload->timestamp);
+        $at = $this->stampTime($payload);
 
         $sets = [];
         $bindings = [];
@@ -837,7 +856,7 @@ class EloquentBeaconStore implements BeaconStore
         return is_array($value) ? $value : [];
     }
 
-    private function insertError(Connection $connection, BeaconPayload $payload, string $key, string $now): bool
+    private function insertError(Connection $connection, BeaconPayload $payload, string $key, string $receivedAt, ClockCorrection $clock): bool
     {
         // knownValue(), not get(): the row is unique on the event key a job queued by
         // an older package shares with the fresh parse, so whichever arrives first
@@ -876,8 +895,9 @@ class EloquentBeaconStore implements BeaconStore
             // Severity, not the wire `fatal`: a reconnecting error is sent fatal but
             // leaves its view open (BeaconPayload::isFatalError()).
             'fatal' => $payload->isFatalError(),
-            'occurred_at' => self::clientTime($payload->timestamp),
-            'received_at' => $now,
+            'occurred_at' => $this->stampTime($payload),
+            'received_at' => $receivedAt,
+            ...$this->supportedSignals($this->clockColumns($payload, $clock), self::ERRORS),
         ]) === 1;
     }
 
@@ -888,7 +908,7 @@ class EloquentBeaconStore implements BeaconStore
      */
     private function eventStamps(BeaconPayload $payload): array
     {
-        $at = self::clientTime($payload->timestamp);
+        $at = $this->stampTime($payload);
 
         return match ($payload->event) {
             'viewStart' => ['started_at' => $at],
@@ -1094,8 +1114,9 @@ class EloquentBeaconStore implements BeaconStore
     private function supportedSignals(array $columns, string $table = self::VIEWS): array
     {
         $optional = [
-            ...self::SIGNAL_COLUMNS[$table], ...self::RECONNECT_COLUMNS[$table],
+            ...(self::SIGNAL_COLUMNS[$table] ?? []), ...(self::RECONNECT_COLUMNS[$table] ?? []),
             ...(self::GAUGE_COLUMNS[$table] ?? []), ...(self::DIAGNOSTIC_COLUMNS[$table] ?? []),
+            ...(self::CLOCK_COLUMNS[$table] ?? []),
         ];
 
         return array_filter($columns, fn (string $column): bool => ! in_array($column, $optional, true)
@@ -1186,6 +1207,45 @@ class EloquentBeaconStore implements BeaconStore
         }
 
         return $connection;
+    }
+
+    /** The beacon's clock correction under beacons.max_clock_offset (seconds; null or 0 is off). */
+    private function clock(BeaconPayload $payload): ClockCorrection
+    {
+        $cap = $this->config->get('scarlett-player.beacons.max_clock_offset', 86400);
+
+        if (! is_numeric($cap) || $cap <= 0) {
+            return ClockCorrection::none();
+        }
+
+        return ClockCorrection::for($payload, (int) ($cap * 1000));
+    }
+
+    /** The beacon's timestamp on the server clock: what every *_at column holds. */
+    private function stampTime(BeaconPayload $payload): string
+    {
+        return self::clientTime($this->clock($payload)->correct($payload->timestamp));
+    }
+
+    /** Request time when the controller stamped it, else the time the job runs. */
+    private function receivedAt(BeaconPayload $payload, string $now): string
+    {
+        $received = $payload->receivedAtMs();
+
+        return $received === null ? $now : self::clientTime($received);
+    }
+
+    /**
+     * The raw client time and the shift applied, for the events and errors tables.
+     *
+     * @return array<string, int|string|null>
+     */
+    private function clockColumns(BeaconPayload $payload, ClockCorrection $clock): array
+    {
+        return [
+            'client_occurred_at' => self::clientTime($payload->timestamp),
+            'clock_offset_ms' => $clock->source === ClockCorrection::SOURCE_SENT_AT ? $clock->offsetMs : null,
+        ];
     }
 
     private function serverNow(): string

@@ -4,6 +4,33 @@ All notable changes to `hei/laravel-scarlett-player` are documented here. The fo
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] - Unreleased
+
+No migration and no ingest change. Move the host's `@scarlett-player/*` packages to 1.26.0 with the package update, or set `SCARLETT_PLAYER_VERSION=1.25.0` to stay on the old bundle.
+
+### Changed
+
+- Pinned to player 1.26.0: `player.player_version` defaults to `1.26.0` (was `1.25.0`), so embed mode loads the CDN's `v1.26.0/` bundle and its addons as soon as the package deploys, unless the host pins another version. Verified against the published npm 1.26.0 embed, chapters, share, captions and core packages: the embed attribute README, `normaliseChapters()`, `buildEmbedSnippet()`, `Chapter` and `CaptionSource` are byte-identical to 1.25.0. The CDN's `v1.26.0/` files are not checked here; confirm `embed.js` and both addon files are served before deploying.
+- Fixtures: a fresh 1.26.0 wire capture (`tests/Fixtures/wire/1.26.0/`, 31 files, replayed through the route by `Player126Test`); the embed attribute, chapters, share and browser-bundle fixtures moved to 1.26.0 with their provenance. The 1.25.0 wire set is retained.
+- README: "Player 1.26" and the `v0.9.1` compatibility row.
+
+## [0.9.0] - Unreleased
+
+Upgrading from 0.8: update the package, then `php artisan vendor:publish --tag=scarlett-migrations-clock`, `php artisan migrate` and `php artisan queue:restart`. Fresh installs publish only `scarlett-migrations`. Until the migration runs, ingest keeps working and skips the new columns, and `scarlett:doctor` warns. Rows already stored are not rewritten, and a view in flight at the upgrade has raw stamps before it and corrected ones after.
+
+### Added
+
+- Clock-skew correction at ingest. The controller stamps the moment a beacon arrives; the beacon's offset is that time minus its `sentAt` (player 1.25 and later), and every `*_at` column (`started_at`, `first_frame_at`, `ended_at`, `last_event_at`, the per-column stamps, `custom_at`, `metrics_at`, and `occurred_at` on events and errors) is the beacon's `timestamp` plus that offset, so viewers with wrong clocks no longer scramble ordering or lag measurements. The correction is a pure function of one beacon: delivery order, retries and queue wait cannot change it. `received_at` is now the request time (a job queued by 0.8.0 keeps job time). The event key, the custom and server stamps and the deduplication hash stay on the viewer's raw clock.
+- A beacon without a numeric `sentAt` or receipt time is stored as received (`clock_source` `none`). An offset beyond the new `beacons.max_clock_offset` (seconds, default 86400; null or 0 turns the correction off) is stored as received and tagged `rejected`.
+- Additive migration `0001_01_01_000009_add_clock_correction_to_scarlett_tables.php`: `client_occurred_at` (viewer's own time) and `clock_offset_ms` on `scarlett_beacon_events` and `scarlett_view_errors`; `clock_offset_ms` and `clock_source` on `scarlett_views`, written once by the beacon that creates the row. Published alone with `--tag=scarlett-migrations-clock`, idempotent, stops with `UpgradeMigrationOrderException` before any change when a create migration has not run.
+- `ClockCorrection`, `BeaconPayload::withReceivedAt()` and `receivedAtMs()`; `beacon clock columns` doctor check and the clock suffix in `beacon upgrade migration order`.
+- README: "Clock-skew correction", the publish tag, the doctor row and the `v0.9.0` compatibility row.
+
+### Changed
+
+- `scarlett:views:inspect`: "Stored minus sentAt" is now network time plus the viewer's clock error, the correction applied. It no longer includes the beacons queue wait for beacons stamped at the request; a beacon queued by 0.8.0 has no receipt time and still does.
+- `player.player_version` stays 1.25.0. Player 1.26.0 adds a `queuedForMs` custom dimension and nothing the ingest must know; the pin moves once 1.26.0 is on the CDN and its embed attributes are verified.
+
 ## [0.8.0] - 2026-10-13
 
 Upgrading from 0.7: update the package, then `php artisan vendor:publish --tag=scarlett-migrations-diagnostics`, `php artisan migrate` and `php artisan queue:restart`, then move the player to 1.25.0. Fresh installs publish only `scarlett-migrations`. Until the migration runs, ingest keeps working and skips the new columns, and `scarlett:doctor` warns.

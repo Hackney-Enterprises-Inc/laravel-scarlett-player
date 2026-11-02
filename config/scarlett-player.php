@@ -157,6 +157,14 @@ return [
         'raw_events_except' => [],
 
         /**
+         * Clock-skew correction: the largest gap, in seconds, between a beacon's
+         * sentAt and the moment the server received it that is still treated as a
+         * wrong viewer clock. A beacon beyond it is stored uncorrected and the
+         * view's clock_source is "rejected". Null or 0 turns the correction off.
+         */
+        'max_clock_offset' => 86400,
+
+        /**
          * Store the client IP address at all.
          */
         'store_ip' => false,
@@ -375,12 +383,12 @@ return [
         /**
          * The @scarlett-player/* version whose wire contracts this app targets.
          */
-        'player_version' => env('SCARLETT_PLAYER_VERSION', '1.25.0'),
+        'player_version' => env('SCARLETT_PLAYER_VERSION', '1.26.0'),
 
         /**
          * Where the embed bundle lives, as a template: {cdn_url} and {player_version}
          * are replaced with the keys above. The player CDN serves versioned directories
-         * (v1.25.0/embed.js, an ES module); for a floating version use
+         * (v1.26.0/embed.js, an ES module); for a floating version use
          * '{cdn_url}/latest/embed.js' once the CDN serves /latest/. A path ending in
          * .cjs (the UMD build) is loaded as a classic script, anything else as a module.
          */
@@ -391,7 +399,7 @@ return [
          * heartbeatInterval. Null leaves the player's default (10 s). Each player sends
          * 60 / interval heartbeats a minute against the scarlett-beacons limit
          * (beacons.throttle, 600 a minute per IP by default), so a short interval on a
-         * page with several players needs a higher limit. Module mode only: the 1.25.0 embed
+         * page with several players needs a higher limit. Module mode only: the 1.26.0 embed
          * bundle has no attribute for it.
          */
         'heartbeat_interval' => env('SCARLETT_HEARTBEAT_INTERVAL'),
