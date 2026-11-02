@@ -81,9 +81,9 @@ final readonly class BeaconPayload
      * Written by __serialize(). A serialized payload without it, or with an older
      * version, was queued by an older package, whose classification may have left
      * promoted names in custom: none before 0.5.0, version 1 from 0.5.0 to 0.7.x,
-     * version 2 from 0.8.0.
+     * version 2 from 0.8.0 to 0.9.x, version 3 from 0.10.0.
      */
-    private const SERIAL_VERSION = 2;
+    private const SERIAL_VERSION = 3;
 
     /**
      * Names promoted since serial version 1 (0.8.0, player 1.25.0), captured from
@@ -91,6 +91,12 @@ final readonly class BeaconPayload
      * out: nothing reads it through knownValue().
      */
     private const PROMOTED_SINCE_SERIAL_1 = ['decodedFramesTotal', 'droppedFramesTotal'];
+
+    /**
+     * Names promoted since serial version 2 (0.10.0, player 1.27.0),
+     * captured from the custom dimensions of a job queued by 0.8.0 to 0.9.x.
+     */
+    private const PROMOTED_SINCE_SERIAL_2 = ['startState', 'stalled'];
 
     /** Keys every beacon carries. The four ids are required. */
     public const IDENTITY = ['event', 'timestamp', 'viewId', 'sessionId', 'viewerId', 'videoId'];
@@ -154,6 +160,9 @@ final readonly class BeaconPayload
         // player 1.25.0
         'decodedFramesTotal',
         'droppedFramesTotal',
+        // player 1.27.0
+        'startState',
+        'stalled',
     ];
 
     /**
@@ -272,6 +281,12 @@ final readonly class BeaconPayload
         // every beacon from the built-in transport (player 1.25.0): dispatch time,
         // epoch ms. Raw log only, never hashed (HASH_EXCLUDED).
         'sentAt' => 'numeric',
+        // viewEnd (player 1.27.0): why the view never played, one of
+        // played, awaitingTap, failed, never.
+        'startState' => 'string',
+        // the terminal error of the player's stall ceiling; true only together with
+        // reconnectExhausted.
+        'stalled' => 'boolean',
     ];
 
     /**
@@ -701,9 +716,14 @@ final readonly class BeaconPayload
             }
         }
 
-        if ($version !== null && $version < 2) {
-            // Queued by 0.5.0 to 0.7.x: the names promoted since, left in custom.
-            foreach (self::PROMOTED_SINCE_SERIAL_1 as $key) {
+        if ($version !== null && $version < 3) {
+            // Queued by 0.5.0 to 0.9.x: the names promoted since, left in custom. A job
+            // from before 0.8.0 lacks both promotions; one from 0.8.0 on, only the later.
+            $promoted = $version < 2
+                ? [...self::PROMOTED_SINCE_SERIAL_1, ...self::PROMOTED_SINCE_SERIAL_2]
+                : self::PROMOTED_SINCE_SERIAL_2;
+
+            foreach ($promoted as $key) {
                 $value = $this->custom[$key] ?? null;
 
                 if (! $this->has($key) && ! array_key_exists($key, $legacy) && self::isType($value, self::FIELDS[$key])) {

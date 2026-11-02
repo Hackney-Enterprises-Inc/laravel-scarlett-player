@@ -225,6 +225,10 @@ class ScarlettPlayerServiceProvider extends ServiceProvider
             __DIR__.'/../database/migrations/0001_01_01_000009_add_clock_correction_to_scarlett_tables.php' => database_path('migrations/0001_01_01_000009_add_clock_correction_to_scarlett_tables.php'),
         ], 'scarlett-migrations-clock');
 
+        $this->publishesMigrations([
+            __DIR__.'/../database/migrations/0001_01_01_000010_add_start_state_and_stalled_to_scarlett_tables.php' => database_path('migrations/0001_01_01_000010_add_start_state_and_stalled_to_scarlett_tables.php'),
+        ], 'scarlett-migrations-startstate');
+
         RateLimiter::for('scarlett-beacons', fn (Request $request): Limit => $this->limitFrom(
             config('scarlett-player.beacons.throttle'),
         )->by((string) $request->ip()));
@@ -263,6 +267,7 @@ class ScarlettPlayerServiceProvider extends ServiceProvider
             Doctor\Checks\BeaconGaugeColumnsCheck::class,
             Doctor\Checks\BeaconDiagnosticColumnsCheck::class,
             Doctor\Checks\BeaconClockColumnsCheck::class,
+            Doctor\Checks\BeaconStartStateColumnsCheck::class,
             Doctor\Checks\BeaconUpgradeMigrationOrderCheck::class,
             BeaconContextCheck::class,
         ];

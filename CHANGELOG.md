@@ -4,6 +4,24 @@ All notable changes to `hei/laravel-scarlett-player` are documented here. The fo
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - Unreleased
+
+Upgrading from 0.9: update the package, then `php artisan vendor:publish --tag=scarlett-migrations-startstate`, `php artisan migrate` and `php artisan queue:restart`. Fresh installs publish only `scarlett-migrations`. Until the migration runs, ingest keeps working and skips the new columns, and `scarlett:doctor` warns. Rows already stored are not rewritten. `player.player_version` stays 1.26.0: player 1.27.0 sends these fields, and the pin moves to it in a following release once it is on the CDN and its embed attributes are verified.
+
+### Added
+
+- `startState` on `viewEnd` (`played`, `awaitingTap`, `failed`, `never`) is a known string field, stored in `scarlett_views.start_state`, set once and cut to 16 characters. A value of another type stays a custom dimension.
+- `stalled` on an `error` beacon (true on the terminal error of the player's stall ceiling, together with `reconnectExhausted`) is a known boolean field, stored in `scarlett_view_errors.stalled`.
+- `playBlocked` beacons (`reason`, `errorName`, `readyState`) are accepted as raw events; `reason` and `errorName` are custom dimensions. No column.
+- Additive migration `0001_01_01_000010_add_start_state_and_stalled_to_scarlett_tables.php`: nullable `scarlett_views.start_state` and `scarlett_view_errors.stalled`. Published alone with `--tag=scarlett-migrations-startstate`, idempotent, stops with `UpgradeMigrationOrderException` before any change when a create migration has not run, and `down()` drops only the columns it owns.
+- `beacon start state columns` doctor check and the start state suffix in `beacon upgrade migration order`.
+- README: "Why a view never played, and upgrading from 0.9", the publish tag, the doctor row and the `v0.10.0` compatibility row, and reader guidance for rebuffering and QoE (read `rebuffer_fraction`, filter `play_ms > 0`, never average `qoe_score` across `qoe_version`).
+
+### Changed
+
+- `BeaconPayload` serializes with classification version 3. `startState` and `stalled` were custom dimensions in 0.9.x and keep their place in the deduplication hash, so a beacon redelivered across the upgrade has the same event key. A job queued by 0.9.x (or earlier) still fills the new columns, because `knownValue()` captures both names from its custom dimensions.
+- Readers of the new player release: a `pause` beacon follows `playRequest` on a blocked play (the browser's own pause event after the refused `play()`); it is not a viewer action.
+
 ## [0.9.1] - 2026-11-02
 
 No migration and no ingest change. Move the host's `@scarlett-player/*` packages to 1.26.0 with the package update, or set `SCARLETT_PLAYER_VERSION=1.25.0` to stay on the old bundle.

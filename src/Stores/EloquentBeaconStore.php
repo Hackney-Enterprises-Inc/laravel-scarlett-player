@@ -113,6 +113,7 @@ class EloquentBeaconStore implements BeaconStore
         'playerSize' => 'player_size',
         'connectionType' => 'connection_type',
         'exitType' => 'exit_type',
+        'startState' => 'start_state',
         'pageUrl' => 'page_url',
         'referrerOrigin' => 'referrer_origin',
         'fatalErrorCategory' => 'fatal_error_category',
@@ -271,6 +272,12 @@ class EloquentBeaconStore implements BeaconStore
         self::VIEWS => ['clock_offset_ms', 'clock_source'],
         self::EVENTS => ['client_occurred_at', 'clock_offset_ms'],
         self::ERRORS => ['client_occurred_at', 'clock_offset_ms'],
+    ];
+
+    /** Columns added by the start state upgrade (migration 10), also checked by doctor. */
+    public const START_STATE_COLUMNS = [
+        self::VIEWS => ['start_state'],
+        self::ERRORS => ['stalled'],
     ];
 
     /**
@@ -871,7 +878,7 @@ class EloquentBeaconStore implements BeaconStore
             'attempts' => 'attempts', 'retriesExhausted' => 'retries_exhausted',
             'reconnectExhausted' => 'reconnect_exhausted', 'timedOut' => 'timed_out',
             'networkState' => 'network_state', 'readyState' => 'ready_state', 'online' => 'online',
-            'sourceHost' => 'source_host', 'reconnecting' => 'reconnecting',
+            'sourceHost' => 'source_host', 'reconnecting' => 'reconnecting', 'stalled' => 'stalled',
         ] as $field => $column) {
             $value = $payload->knownValue($field);
 
@@ -931,7 +938,11 @@ class EloquentBeaconStore implements BeaconStore
             $value = $payload->get($key);
 
             if ($value !== null) {
-                $columns[$column] = is_bool($value) ? $value : $this->string($value, in_array($column, ['page_url', 'referrer_origin'], true) ? 65535 : 255);
+                $columns[$column] = is_bool($value) ? $value : $this->string($value, match ($column) {
+                    'page_url', 'referrer_origin' => 65535,
+                    'start_state' => 16,
+                    default => 255,
+                });
             }
         }
 
@@ -1116,7 +1127,7 @@ class EloquentBeaconStore implements BeaconStore
         $optional = [
             ...(self::SIGNAL_COLUMNS[$table] ?? []), ...(self::RECONNECT_COLUMNS[$table] ?? []),
             ...(self::GAUGE_COLUMNS[$table] ?? []), ...(self::DIAGNOSTIC_COLUMNS[$table] ?? []),
-            ...(self::CLOCK_COLUMNS[$table] ?? []),
+            ...(self::CLOCK_COLUMNS[$table] ?? []), ...(self::START_STATE_COLUMNS[$table] ?? []),
         ];
 
         return array_filter($columns, fn (string $column): bool => ! in_array($column, $optional, true)

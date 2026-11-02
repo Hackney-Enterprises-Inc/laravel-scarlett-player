@@ -122,6 +122,7 @@ migration below. See
 | `scarlett-migrations-gauges` | Only the additive canonical gauges migration (`completion_ratio`, `rebuffer_fraction` with stamps), for upgrades from 0.5 |
 | `scarlett-migrations-diagnostics` | Only the additive diagnostics migration (`decoded_frames_total`, `dropped_frames_total`, indexed `viewer_ref`), for upgrades from 0.7 |
 | `scarlett-migrations-clock` | Only the additive clock-skew migration (`clock_offset_ms`, `clock_source`, `client_occurred_at`), for upgrades from 0.8 |
+| `scarlett-migrations-startstate` | Only the additive start state migration (`scarlett_views.start_state`, `scarlett_view_errors.stalled`), for upgrades from 0.9 |
 | `scarlett-views` | The embed page and Blade component views, to `resources/views/vendor/scarlett` |
 | `scarlett-js` | The JS initialiser, to `resources/js/vendor/scarlett-player/init.js` |
 
@@ -129,7 +130,7 @@ migration below. See
 
 A fresh installation publishes **only** `scarlett-migrations`: from 0.4.0 that folder
 contains the signals upgrade, from 0.5.0 the player 1.22 upgrade, from 0.6.0 the
-canonical gauges upgrade, from 0.8.0 the diagnostics upgrade and from 0.9.0 the clock-skew upgrade, in order. The upgrade tags are for hosts that installed
+canonical gauges upgrade, from 0.8.0 the diagnostics upgrade, from 0.9.0 the clock-skew upgrade and from 0.10.0 the start state upgrade, in order. The upgrade tags are for hosts that installed
 before that upgrade existed. Each publishes
 one migration, dated at publish time, so it sorts after create migrations published
 earlier and a fresh `migrate` (a new environment, a test database) creates the tables
@@ -145,8 +146,8 @@ older string form) has it off and gets the file under its `0001_01_01_...` name:
 `'migrations' => ['table' => 'migrations', 'update_date_on_publish' => true]` before
 publishing, or write your own dated migration (below).
 
-All five upgrade migrations are idempotent (the first three from 0.6.0, the diagnostics and
-clock ones from their first release). A column or index that already exists is left alone, so publishing a tag twice (each publish adds another dated copy), a database that
+All six upgrade migrations are idempotent (the first three from 0.6.0, the diagnostics,
+clock and start state ones from their first release). A column or index that already exists is left alone, so publishing a tag twice (each publish adds another dated copy), a database that
 already ran an earlier copy, or a host that added the columns itself all migrate as a
 no-op. The signals migration adds `qoe_version` first, on its own, and marks existing
 scores as QoE v1 straight after, so the backfill runs in the run that adds the column.
@@ -156,7 +157,8 @@ backfill finished, so it marks scored rows still without a version as v1 again. 
 already carry a version are never changed. Rolling a copy back drops its columns only when no other copy of the
 same upgrade (a migration whose name ends `_add_signals_to_scarlett_tables`,
 `_add_reconnects_to_scarlett_tables`, `_add_gauges_to_scarlett_tables`,
-`_add_diagnostics_to_scarlett_tables` or `_add_clock_correction_to_scarlett_tables`) is still recorded as run.
+`_add_diagnostics_to_scarlett_tables`, `_add_clock_correction_to_scarlett_tables` or
+`_add_start_state_and_stalled_to_scarlett_tables`) is still recorded as run.
 
 **Published with 0.4.x or 0.5.0?** Those tags wrote the fixed names
 `0001_01_01_000005_add_signals_to_scarlett_tables.php` and
@@ -185,7 +187,7 @@ order and there is nothing to repair.
 column lists from the upgrade sections below (every column nullable; `*_at` columns are
 `dateTime` with precision 3) and skip the tags. Name the file with the package's suffix
 (`..._add_signals_to_scarlett_tables.php`, `..._add_reconnects_to_scarlett_tables.php`,
-`..._add_gauges_to_scarlett_tables.php`, `..._add_diagnostics_to_scarlett_tables.php`, `..._add_clock_correction_to_scarlett_tables.php`) if a published copy may also run, so a rollback of that copy keeps your columns.
+`..._add_gauges_to_scarlett_tables.php`, `..._add_diagnostics_to_scarlett_tables.php`, `..._add_clock_correction_to_scarlett_tables.php`, `..._add_start_state_and_stalled_to_scarlett_tables.php`) if a published copy may also run, so a rollback of that copy keeps your columns.
 
 ### Routes
 
@@ -565,7 +567,20 @@ $averages = DB::table('scarlett_views')
 
 SQL AVG excludes null scores and includes a real zero. Do not coalesce null scores
 to zero or use a truthiness filter that removes zeroes. A group with only access
-denials has a null average. Compare QoE v1 and v2 as separate series.
+denials has a null average. Compare QoE v1, v2 and v3 as separate series. v3 (player 1.27.0) scores a view that never showed a
+first frame by cause: 0 when it asked to play and got none, null when it never asked or is
+still waiting for a tap, so a v3 average is lower than a v2 average for the same traffic.
+
+Reading rebuffering and QoE honestly (HEI-LSP-13):
+
+- Read `rebuffer_fraction` (0..1), not the legacy `rebuffer_ratio`. The player divides
+  rebuffer time by watch time and caps the percentage at 100, and the canonical column
+  clamps to 1; `rebuffer_ratio` still holds out-of-range values sent by player 1.22.
+- Count playback only where there was playback: filter `play_ms > 0` for averages of
+  play-based figures, and use `start_state` (below) to size the views that never played.
+  The player scores a view that never showed a frame near 100, so an unfiltered
+  `AVG(qoe_score)` flatters the player by the share of never-played views.
+- Never average `qoe_score` across `qoe_version` values: group by version, as above.
 
 #### Player 1.22 and upgrading from 0.4
 
@@ -729,6 +744,41 @@ What changes on the wire, and what it means for readers:
 
 Diagnostics snapshots (1.23) and the core teardown bound (1.24) are not on the wire, so
 they change nothing in the stored data.
+
+#### Why a view never played, and upgrading from 0.9
+
+Package 0.10.0 ingests three things player 1.27.0 sends (the pin, `player.player_version`,
+stays **1.26.0** in this release and moves in a following one once 1.27.0 is on the CDN and
+its embed attributes are verified; ingest works with any player, the fields simply stay
+empty until it sends them):
+
+- `viewEnd.startState` is stored in `scarlett_views.start_state`, set once. It says how a
+  view started: `played` (a first frame was shown), `awaitingTap` (the browser refused
+  autoplay and the viewer never tapped), `failed` (the view ended in an error, or logged
+  one, before any frame) and `never` (no frame and nothing explains it). Count never-played
+  views with `start_state` instead of inferring them from a missing `startupTime`.
+- A `playBlocked` beacon (`reason: 'autoplay'`, optional `errorName`, `readyState`) is a
+  raw event like any other: stored in `scarlett_beacon_events` unless it is in
+  `beacons.raw_events_except`, with `reason` and `errorName` as custom dimensions. It needs
+  no column. The browser's own `pause` event follows the play request on a blocked play,
+  so a `pause` beacon right after `playRequest` is not a viewer action: ignore it when
+  counting pauses.
+- `error.stalled` is stored in `scarlett_view_errors.stalled` beside `reconnect_exhausted`.
+  It is true only on the terminal error of the player's stall ceiling (`stallTimeoutMs`),
+  which always has `reconnect_exhausted` true too, so a stall is told apart from a
+  reconnect window that ran out.
+
+```bash
+php artisan vendor:publish --tag=scarlett-migrations-startstate
+php artisan migrate
+php artisan queue:restart
+```
+
+Fresh installs publish only `scarlett-migrations`. Until the migration runs, ingest keeps
+working and skips the two columns, and `scarlett:doctor` warns (`beacon start state
+columns`); both fields stay in the custom dimensions and the raw log meanwhile. Existing
+rows are not rewritten. A job queued by 0.9.x still fills the new columns after the
+upgrade, and a beacon redelivered across it keeps its event key.
 
 #### Player 1.26
 
@@ -1284,7 +1334,8 @@ browser CORS.
 recipe, the beacon queue (warns when it shares a queue with clips), the IP column,
 server-side context, the raw-log `seq` column, the signals, player 1.22
 (`beacon reconnect columns`), canonical gauges (`beacon gauge columns`) and diagnostics
-(`beacon diagnostic columns`) upgrade columns, and any upgrade migration copy, in any
+(`beacon diagnostic columns`), clock (`beacon clock columns`) and start state
+(`beacon start state columns`) upgrade columns, and any upgrade migration copy, in any
 registered migration path, that sorts before the create migrations it needs
 (`beacon upgrade migration order`, see [Upgrade migrations](#upgrade-migrations)).
 
@@ -2004,6 +2055,7 @@ Prints one row per check and exits non-zero when any check fails (warnings alone
 | beacon ip column | `beacons.store_ip` is on but `scarlett_views.ip_address` does not exist, because it is created only when `store_ip` was on at migrate time (fail); the table is missing or cannot be inspected (warn) |
 | beacon signals columns | missing signal columns on views/errors (warn); passes with the complete schema or a custom store; use the signals-only upgrade tag and restart workers |
 | beacon clock columns | missing `clock_offset_ms` or `clock_source` on views, or `client_occurred_at` or `clock_offset_ms` on events or errors (warn); passes with the complete schema or a custom store; publish `--tag=scarlett-migrations-clock`, migrate and restart workers |
+| beacon start state columns | missing `start_state` on views or `stalled` on errors (warn); passes with the complete schema or a custom store; publish `--tag=scarlett-migrations-startstate`, migrate and restart workers |
 | beacon diagnostic columns | missing `decoded_frames_total`, `dropped_frames_total` or `viewer_ref` on views (warn); passes with the complete schema or a custom store; publish `--tag=scarlett-migrations-diagnostics`, migrate and restart workers |
 | beacon seq column | raw-event storage is on but `scarlett_beacon_events.seq` is missing, or the table cannot be inspected (warn); passes when the column exists or `beacons.store_raw_events` is off |
 | beacon context | `beacons.context` is set but is not a class implementing `ResolvesBeaconContext`, or `scarlett_views.server` does not exist, on a table migrated by 0.1 (fail); the table is missing or cannot be inspected (warn) |
@@ -2056,6 +2108,7 @@ falls through to the bound resolver.
 | `v0.8.0` | 1.22.x through 1.25.x, pinned at 1.25.0 (`player.player_version`, was 1.24.0) | `tests/Fixtures/wire/1.25.0/` (captured by the player harness at 1.25.0) | Verified against the published npm 1.25.0 embed, chapters, share, captions and core packages and the CDN `v1.25.0/` files (byte-identical to npm); the browser test runs the npm 1.25.0 embed bundle. `sentAt` is a known field, kept in the raw log and left out of `custom` and the deduplication hash; the live seek window is a custom dimension. Startup and rebuffer readings rise against 1.24 (frame-based `videoStart`, frozen-picture rebuffers), and load timeouts reconnect. Additive diagnostics migration (`scarlett-migrations-diagnostics`): monotonic `decoded_frames_total` / `dropped_frames_total` and the indexed `viewer_ref`, copied from the server context (`beacons.viewer_ref_key`); `scarlett:views:inspect` for support lookups. The embed attribute names, the `Chapter`/`CaptionSource` shapes, the addon file names and the share snippet are unchanged from 1.24.0 |
 | `v0.9.0` | Still pinned at 1.25.0 (`player.player_version`); built for player 1.26.0 | 1.25.0 set retained | Clock-skew correction at ingest: every `*_at` column is the beacon's `timestamp` shifted by (request time minus `sentAt`), `received_at` is the request time, and the viewer's own time and the shift are kept. Additive clock migration (`scarlett-migrations-clock`); `beacons.max_clock_offset`; `beacon clock columns` doctor check. Player 1.26.0 adds `queuedForMs` (a custom dimension) and nothing else the ingest must know. The pin moves once 1.26.0 is on the CDN |
 | `v0.9.1` | 1.22.x through 1.26.x, pinned at 1.26.0 (`player.player_version`, was 1.25.0) | `tests/Fixtures/wire/1.26.0/` (captured by the player harness at 1.26.0; the 1.25.0 set is retained) | Verified against the published npm 1.26.0 embed, chapters, share, captions and core packages: the embed attribute README, `normaliseChapters()`, `buildEmbedSnippet()`, `Chapter` and `CaptionSource` are byte-identical to 1.25.0, and the browser test runs the npm 1.26.0 embed bundle. 1.26.0 adds `queuedForMs` (a custom dimension, stored in `custom` and the raw log) on events tracked before the analytics plugin initialised, and the player now ignores the page-teardown `Media source not supported` element error, so fewer warnings are reported by iOS views. No migration, no config change except the new default pin |
+| `v0.10.0` | Still pinned at 1.26.0 (`player.player_version`); built for player 1.27.0, which adds `playBlocked`, `startState` and `stalled` | 1.26.0 set retained | `startState` on `viewEnd` (`scarlett_views.start_state`, set once), the `playBlocked` raw event, and `stalled` on the terminal error of the player's stall ceiling (`scarlett_view_errors.stalled`). Additive start state migration (`scarlett-migrations-startstate`); `beacon start state columns` doctor check. No wire fixture is captured for the new fields (the player harness's browser allows autoplay), so the tests build the bodies by hand. The pin moves to 1.27.0 once it is on the CDN and its embed attributes are verified |
 
 Player 1.19.3's `rebufferGraceMs: 0` restores immediate rebuffer counting. Its
 `rebufferStart.timestamp` is the send time, not backdated to the first `waiting`;

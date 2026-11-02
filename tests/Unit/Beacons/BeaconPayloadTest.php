@@ -100,7 +100,7 @@ it('replaces custom dimensions and the address without touching anything else', 
         ->and($payload->custom)->toBe(['email' => 'viewer@example.com']);
 });
 
-it('knows every key the analytics plugin sends through player 1.25.0', function (): void {
+it('knows every key the analytics plugin sends through player 1.25.0 and the start state keys after it', function (): void {
     // index.ts sendBeacon()/sendUnloadBeacon() base keys, then every data object
     // the plugin passes (heartbeat, videoStart, rebufferEnd, pause, rebufferStart,
     // seeking, error, qualityChange, both viewEnd variants, the latency summary).
@@ -124,6 +124,9 @@ it('knows every key the analytics plugin sends through player 1.25.0', function 
         // 1.25.0: the transport's dispatch time and the view's frame totals. The live
         // seekable window stays a custom dimension, merged on the view row.
         'sentAt', 'decodedFramesTotal', 'droppedFramesTotal',
+        // The player release after 1.26.0: why a view never played and the stall ceiling's
+        // terminal error. playBlocked's reason and errorName stay custom dimensions.
+        'startState', 'stalled',
     ];
 
     expect(array_keys([...BeaconPayload::CONTEXT, ...BeaconPayload::FIELDS]))->toEqualCanonicalizing($shipped);
@@ -614,6 +617,23 @@ describe('player 1.25.0 fields', function (): void {
             ->and($payload->custom)->toBe(['sentAt' => 'host'])
             ->and($payload->bodyHash)->toBe(sha1(json_encode($legacyBody, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)));
     });
+});
+
+it('preserves the 0.9.x hash for the promoted startState and stalled', function (): void {
+    // 0.9.x classified both as custom, in received order, beside the host's dimensions.
+    $body = Beacons::body('viewEnd', 0, ['tenant' => 'a', 'startState' => 'awaitingTap', 'watchTime' => 9, 'stalled' => true, 'other' => 1]);
+    $legacyBody = array_replace(
+        array_intersect_key($body, array_flip(BeaconPayload::IDENTITY)),
+        array_intersect_key($body, BeaconPayload::CONTEXT),
+        ['watchTime' => 9],
+        ['tenant' => 'a', 'startState' => 'awaitingTap', 'stalled' => true, 'other' => 1],
+    );
+    $payload = BeaconPayload::fromArray($body);
+
+    expect($payload->get('startState'))->toBe('awaitingTap')
+        ->and($payload->get('stalled'))->toBeTrue()
+        ->and($payload->custom)->toBe(['tenant' => 'a', 'other' => 1])
+        ->and($payload->bodyHash)->toBe(sha1(json_encode($legacyBody, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)));
 });
 
 it('preserves the 0.7.0 hash for the promoted 1.25.0 frame totals', function (): void {
