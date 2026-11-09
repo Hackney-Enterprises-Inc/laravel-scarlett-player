@@ -33,8 +33,27 @@ it('merges the package config with the sketch defaults', function (): void {
         ->and(config('scarlett-player.beacons.throttle'))->toBe('600,1')
         ->and(config('scarlett-player.clips.queue'))->toBe('scarlett-clips')
         ->and(config('scarlett-player.clips.generators.local-ffmpeg.timeout'))->toBe(300)
-        ->and(config('scarlett-player.player.player_version'))->toBe('1.27.0')
+        ->and(config('scarlett-player.player.player_version'))->toBe('1.27.1')
         ->and(config('scarlett-player.embed.unsigned_params'))->toBe(['startTime', 'shareUrl', 'autoplay', 'muted']);
+});
+
+it('follows the package for the player version unless the host pins one', function (?string $configured, string $expected): void {
+    config()->set('scarlett-player.player.player_version', $configured);
+
+    (new ScarlettPlayerServiceProvider($this->app))->register();
+
+    expect(config('scarlett-player.player.player_version'))->toBe($expected);
+})->with([
+    'null follows the package' => [null, PlayerConfigBuilder::DEFAULT_PLAYER_VERSION],
+    'empty follows the package' => ['  ', PlayerConfigBuilder::DEFAULT_PLAYER_VERSION],
+    'an explicit pin is kept' => ['1.26.0', '1.26.0'],
+]);
+
+it('ships a config file that leaves the player version to the package', function (): void {
+    $shipped = require __DIR__.'/../../../config/scarlett-player.php';
+
+    expect($shipped['player']['player_version'])->toBeNull()
+        ->and(config('scarlett-player.player.player_version'))->toBe(PlayerConfigBuilder::DEFAULT_PLAYER_VERSION);
 });
 
 it('binds ConfigModelResolver when media.resolver is null', function (): void {

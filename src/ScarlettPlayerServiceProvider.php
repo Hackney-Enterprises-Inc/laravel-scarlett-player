@@ -74,6 +74,14 @@ class ScarlettPlayerServiceProvider extends ServiceProvider
     {
         $this->mergeConfigFrom(__DIR__.'/../config/scarlett-player.php', 'scarlett-player');
 
+        // A null or empty pin follows the package. Done here, not as a config default, so a
+        // published config file never freezes the version it was published with.
+        $config = $this->app->make(Repository::class);
+        $pinned = $config->get('scarlett-player.player.player_version');
+        if (! is_string($pinned) || trim($pinned) === '') {
+            $config->set('scarlett-player.player.player_version', PlayerConfigBuilder::DEFAULT_PLAYER_VERSION);
+        }
+
         $this->app->singleton(ResolvesMedia::class, function (Application $app): ResolvesMedia {
             $class = $app->make(Repository::class)->get('scarlett-player.media.resolver') ?? ConfigModelResolver::class;
 

@@ -28,7 +28,9 @@ use Hei\ScarlettPlayer\Data\BeaconPayload;
  * - Severity, not `fatal`: whether an error ended its view is
  *   BeaconPayload::isFatalError(). From player 1.22.0 an error the provider
  *   reconnects from is sent `fatal: true` with severity `warning`, and neither it nor
- *   the `reconnecting` and `recovered` events end or fail the view.
+ *   the `reconnecting` and `recovered` events end or fail the view. From 1.27.1 a
+ *   NON-fatal error can also carry `reconnecting: true` (the first failed native HLS
+ *   reload of an outage, with `attempts`); it never ends the view either.
  */
 interface BeaconStore
 {

@@ -43,6 +43,13 @@ class PlayerConfigBuilder implements Arrayable, JsonSerializable
      */
     public const MAX_HEARTBEAT_MS = 2147483647;
 
+    /**
+     * The player version this package release was verified against. It is what
+     * player.player_version resolves to when that key is null, so it moves with the
+     * package and not with a host's config file.
+     */
+    public const DEFAULT_PLAYER_VERSION = '1.27.1';
+
     /** The player CDN layout: versioned directories, the ES module build. */
     public const DEFAULT_EMBED_BUNDLE = '{cdn_url}/v{player_version}/embed.js';
 
