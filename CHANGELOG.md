@@ -8,7 +8,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 No migration and no new column. Move the host's `@scarlett-player/*` packages to 1.27.1 with the package update, which is also the new default `player.player_version`; set `SCARLETT_PLAYER_VERSION=1.27.0` to stay on the old bundle. A host that published the config file keeps the old default inside its own copy; edit that line once (below) and later package upgrades move the pin by themselves.
 
-Once, in a published `config/scarlett-player.php`, change `'player_version' => env('SCARLETT_PLAYER_VERSION', '1.27.0'),` to `'player_version' => env('SCARLETT_PLAYER_VERSION'),`, then rebuild the config cache. Hosts that never published the config need nothing.
+Once, in a published `config/scarlett-player.php`, remove the hard-coded version fallback from the `player_version` line, whatever it is (a config published before 0.10.0 may say `1.26.0` or older, not `1.27.0`), so it reads `'player_version' => env('SCARLETT_PLAYER_VERSION'),`, then rebuild the config cache. Also remove `SCARLETT_PLAYER_VERSION` from `.env` if set: any non-blank value is an explicit pin and stops the pin following the package. Hosts that never published the config need nothing.
 
 ### Changed
 

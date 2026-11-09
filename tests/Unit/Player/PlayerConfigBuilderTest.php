@@ -92,7 +92,7 @@ it('wires analytics from the beacon route, the media id and the beacon key', fun
         'apiKey' => TestCase::BEACON_KEY,
         'videoTitle' => null,
         'isLive' => false,
-        // From the 1.20.0 gate (the default pin is 1.27.0) the flags are explicit.
+        // From the 1.20.0 gate (the default pin is 1.27.1) the flags are explicit.
         'anonymous' => false,
         'respectDoNotTrack' => false,
     ]);
