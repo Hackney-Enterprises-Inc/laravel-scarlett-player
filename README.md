@@ -653,6 +653,11 @@ What changes for queries and listeners:
   `fatal`), and a reconnecting error is never fatal. The wire value stays in the raw
   log. Count failures with `fatal = true` or `severity = 'fatal'`, and in listeners
   use `PlaybackErrorReported::isFatal()`, not `$payload->get('fatal')`.
+  From player 1.27.1 a **non-fatal** error can also carry `reconnecting: true`: on
+  native HLS (iOS Safari, in-app browsers) only the first failed reload of an outage is
+  sent, with `attempts`. `media_error_code = 4` with `reconnecting = true` is a reload
+  that failed mid-view, not an unsupported format; a dashboard that counts code 4 as
+  "source not supported" should split on `reconnecting`.
   `errorCategory` can now be `network`, `media` or `source` from an element
   MediaError code alone.
 - **New events.** `reconnecting` (once per outage, plus once at the first long-outage
@@ -1734,7 +1739,7 @@ This table is generated from `Hei\ScarlettPlayer\Player\FeatureMatrix`, the same
 builder enforces (`FeatureMatrix::toMarkdown()`; a test fails if the two differ). A cell
 reading "from player X" is checked against `player.player_version`: below it, asking for that
 feature in embed mode throws `UnsupportedInEmbedMode`, which names the module-mode
-alternative. On the default 1.27.0 (from 1.17.0), embed mode carries clips, chapters and captions; chapters
+alternative. On the default 1.27.1 (from 1.17.0), embed mode carries clips, chapters and captions; chapters
 and clips need the embed's addon files, which the component loads for you.
 
 ### Config builder
@@ -2118,6 +2123,7 @@ falls through to the bound resolver.
 | `v0.9.0` | Still pinned at 1.25.0 (`player.player_version`); built for player 1.26.0 | 1.25.0 set retained | Clock-skew correction at ingest: every `*_at` column is the beacon's `timestamp` shifted by (request time minus `sentAt`), `received_at` is the request time, and the viewer's own time and the shift are kept. Additive clock migration (`scarlett-migrations-clock`); `beacons.max_clock_offset`; `beacon clock columns` doctor check. Player 1.26.0 adds `queuedForMs` (a custom dimension) and nothing else the ingest must know. The pin moves once 1.26.0 is on the CDN |
 | `v0.9.1` | 1.22.x through 1.26.x, pinned at 1.26.0 (`player.player_version`, was 1.25.0) | `tests/Fixtures/wire/1.26.0/` (captured by the player harness at 1.26.0; the 1.25.0 set is retained) | Verified against the published npm 1.26.0 embed, chapters, share, captions and core packages: the embed attribute README, `normaliseChapters()`, `buildEmbedSnippet()`, `Chapter` and `CaptionSource` are byte-identical to 1.25.0, and the browser test runs the npm 1.26.0 embed bundle. 1.26.0 adds `queuedForMs` (a custom dimension, stored in `custom` and the raw log) on events tracked before the analytics plugin initialised, and the player now ignores the page-teardown `Media source not supported` element error, so fewer warnings are reported by iOS views. No migration, no config change except the new default pin |
 | `v0.10.0` | 1.22.x through 1.27.x, pinned at 1.27.0 (`player.player_version`, was 1.26.0) | `tests/Fixtures/wire/1.27.0/` (captured by the player harness at 1.27.0; the 1.26.0 set is retained) | Verified against the published npm 1.27.0 embed, chapters, share, captions and core packages and the CDN `v1.27.0/` files (all 14, byte-identical to npm): the embed attribute README, `normaliseChapters()`, `buildEmbedSnippet()`, `Chapter` and `CaptionSource` are byte-identical to 1.26.0, and the browser test runs the npm 1.27.0 embed bundle. `startState` on `viewEnd` (`scarlett_views.start_state`, set once), the `playBlocked` raw event, and `stalled` on the terminal error of the player's stall ceiling (`scarlett_view_errors.stalled`). Player 1.27.0 scores QoE v3: a view that never showed a first frame is 0 (it asked to play) or null (it never asked, or awaits a tap), so a v3 average can be lower than a v2 one (zero-scored views) and is null when every view is null. Additive start state migration (`scarlett-migrations-startstate`); `beacon start state columns` doctor check; `Player127Test` replays the real capture |
+| `v0.10.1` | 1.22.x through 1.27.x, pinned at 1.27.1 (`player.player_version`, was 1.27.0) | `tests/Fixtures/wire/1.27.1/` (captured by the player harness at 1.27.1; the 1.27.0 set is retained), plus a derived native-reload error in `Player1271Test` (`recapture owed`: the harness runs MSE and cannot take the native reload path) | Verified against the published npm 1.27.1 embed, chapters, share, captions and core packages and the CDN `v1.27.1/` files (all 14 `.js`/`.cjs`, byte-identical to npm): the embed attribute README, `normaliseChapters()`, `buildEmbedSnippet()`, `Chapter` and `CaptionSource` are unchanged from 1.27.0, and the browser test runs the npm 1.27.1 embed bundle. No new wire field, event or column and no migration: a pin and fixtures. A frequency and combination change only: on native HLS the first failed reload of an outage arrives as a non-fatal `error` with `reconnecting: true` and `attempts` (never ends the view); fewer false `stalled` errors on iOS; a native live view can report `isLive: false` after its playlist ends (`is_live` stays true-wins). Hosts that published the config set `SCARLETT_PLAYER_VERSION=1.27.1` and rebuild the config cache |
 
 Player 1.19.3's `rebufferGraceMs: 0` restores immediate rebuffer counting. Its
 `rebufferStart.timestamp` is the send time, not backdated to the first `waiting`;
@@ -2138,12 +2144,12 @@ The 1.19.3 and `1.22.0-derived` beacon fixtures are derived from the analytics s
 and explicitly marked `derived (recapture owed)`; they do not claim a captured transport
 (the 1.22.0 set was re-verified against the published source). The share-built embed
 iframe fixture is also derived: it is generated by the share plugin's own snippet
-builder, taken byte for byte from the published 1.27.0 dist (its `buildEmbedSnippet()` is
+builder, taken byte for byte from the published 1.27.1 dist (its `buildEmbedSnippet()` is
 identical to 1.22.0), because the capture harness has no share scenario.
 
 The embed bundle location follows `player.embed_bundle`, a template defaulting to
 `{cdn_url}/v{player_version}/embed.js`: the player CDN serves one directory per release
-(for example, `v1.27.0/`) and no `/latest/` alias yet, so the embed bundle is always the pinned version.
+(for example, `v1.27.1/`) and no `/latest/` alias yet, so the embed bundle is always the pinned version.
 
 ## Development
 

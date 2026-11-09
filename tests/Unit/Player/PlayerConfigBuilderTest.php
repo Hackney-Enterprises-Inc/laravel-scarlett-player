@@ -49,7 +49,7 @@ it('emits schema version 1 with the media source and defaults', function (): voi
     expect($config)->toMatchArray([
         'scarlettConfigVersion' => 1,
         'mode' => 'module',
-        'playerVersion' => '1.27.0',   // the validated default
+        'playerVersion' => '1.27.1',   // the validated default
         'mediaId' => 'video-1',
         'source' => ['src' => 'https://media.example.test/video-1.m3u8', 'isLive' => false, 'duration' => 120.0],
         'poster' => null,
@@ -328,7 +328,7 @@ it('maps to embed data attributes using only README names', function (): void {
     ]);
 
     // The published embed README for the pinned player (tests/Fixtures/embed/attributes/).
-    $readme = (string) file_get_contents(__DIR__.'/../../Fixtures/embed/attributes/1.27.0/README.md');
+    $readme = (string) file_get_contents(__DIR__.'/../../Fixtures/embed/attributes/1.27.1/README.md');
 
     foreach (array_keys($attributes) as $name) {
         expect($readme)->toContain("`{$name}`");
@@ -461,7 +461,7 @@ it('emits clips, chapters and captions as the embed README attributes, in the mo
         ->and(json_decode($attributes['data-captions'], true))->toEqual($module['captions']['sources'])
         ->and(json_decode($attributes['data-captions'], true)[0])->toBe(['language' => 'en', 'label' => 'English', 'src' => 'https://cdn.example.test/en.vtt', 'default' => true]);
 
-    $readme = (string) file_get_contents(__DIR__.'/../../Fixtures/embed/attributes/1.27.0/README.md');
+    $readme = (string) file_get_contents(__DIR__.'/../../Fixtures/embed/attributes/1.27.1/README.md');
 
     foreach (array_keys($attributes) as $name) {
         expect($readme)->toContain("`{$name}`");
@@ -479,8 +479,8 @@ it('names the addon files the embed config needs, beside the bundle and in its f
     $both = ScarlettPlayer::for('video-1')->mode('embed')->withClips()->withChapters([])->withCaptions([]);
 
     expect($both->embedAddonUrls())->toBe([
-        'https://cdn.example.test/scarlett-player/v1.27.0/embed.addon.chapters.js',
-        'https://cdn.example.test/scarlett-player/v1.27.0/embed.addon.clips.js',
+        'https://cdn.example.test/scarlett-player/v1.27.1/embed.addon.chapters.js',
+        'https://cdn.example.test/scarlett-player/v1.27.1/embed.addon.clips.js',
     ])
         ->and(ScarlettPlayer::for('video-1')->mode('embed')->withCaptions([])->embedAddonUrls())->toBe([])
         ->and(ScarlettPlayer::for('video-1')->withClips()->embedAddonUrls())->toBe([]);

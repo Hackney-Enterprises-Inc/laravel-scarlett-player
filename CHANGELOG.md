@@ -4,7 +4,25 @@ All notable changes to `hei/laravel-scarlett-player` are documented here. The fo
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.10.0] - Unreleased
+## [0.10.1] - 2026-11-09
+
+No migration and no new column. Move the host's `@scarlett-player/*` packages to 1.27.1 with the package update, which is also the new default `player.player_version`; set `SCARLETT_PLAYER_VERSION=1.27.0` to stay on the old bundle. A host that published the config file keeps the old default inside its own copy; edit that line once (below) and later package upgrades move the pin by themselves.
+
+Once, in a published `config/scarlett-player.php`, change `'player_version' => env('SCARLETT_PLAYER_VERSION', '1.27.0'),` to `'player_version' => env('SCARLETT_PLAYER_VERSION'),`, then rebuild the config cache. Hosts that never published the config need nothing.
+
+### Changed
+
+- `player.player_version` now defaults to `null`, which resolves to the version the installed package release was verified against (`PlayerConfigBuilder::DEFAULT_PLAYER_VERSION`, 1.27.1), filled in by the service provider. A package upgrade therefore moves the pin with no `.env` or config edit. A value set through `SCARLETT_PLAYER_VERSION` or a literal in a published config is still honoured as an explicit pin. Before, the default lived in the config file, so a published copy froze the version it was published with.
+
+- Pinned to player 1.27.1: `player.player_version` defaults to `1.27.1` (was `1.27.0`), so embed mode loads the CDN's `v1.27.1/` bundle and its addons as soon as the package deploys. Verified against the published npm 1.27.1 embed, chapters, share, captions and core packages: the embed attribute README, `normaliseChapters()`, `buildEmbedSnippet()`, `Chapter` and `CaptionSource` are unchanged from 1.27.0 (the chapters and share `dist/index.js` differ only in their `PKG_VERSION` line). All 14 `.js`, `.cjs` files the CDN serves under `v1.27.1/` were compared with the npm tarball and are byte-identical.
+- Fixtures: a fresh 1.27.1 wire capture (`tests/Fixtures/wire/1.27.1/`, 35 files, replayed through the route by `Player1271WireTest`); the embed attribute, chapters, share and browser-bundle fixtures moved to 1.27.1 with their provenance. The 1.27.0 wire set is retained.
+- Reader guidance for player 1.27.1: on native HLS only the first failed reload of an outage is sent, as a non-fatal error with `reconnecting: true` and `attempts`. This is a frequency and combination change, not a schema change: no new field, column or migration, and older ingests keep working. `media_error_code = 4` with `reconnecting` is a failed reload, not an unsupported format. After a native live event ends, later beacons can carry `isLive: false`; `is_live` stays true-wins. `BeaconStore` and README updated.
+
+### Tests
+
+- `Player1271WireTest` replays the captured 1.27.1 set. `Player1271Test` pins the new combination (view stays open, error columns stored, `PlaybackErrorReported` fires, `ViewEnded` does not) and that severity and `reconnecting`, not the wire `fatal`, decide failure. The body is derived from the player source (`recapture owed`): the capture harness cannot reproduce a native iOS reload.
+
+## [0.10.0] - 2026-11-02
 
 Upgrading from 0.9: update the package, then `php artisan vendor:publish --tag=scarlett-migrations-startstate`, `php artisan migrate` and `php artisan queue:restart`. Fresh installs publish only `scarlett-migrations`. Until the migration runs, ingest keeps working and skips the new columns, and `scarlett:doctor` warns. Rows already stored are not rewritten. Move the host's `@scarlett-player/*` packages to 1.27.0 with the package update, which is also the new default `player.player_version`; set `SCARLETT_PLAYER_VERSION=1.26.0` to stay on the old bundle. A host that published the config file keeps the old default inside its own copy, so the package update alone leaves embed mode on the 1.26.0 bundle: set `SCARLETT_PLAYER_VERSION=1.27.0` or edit `player.player_version` in the published file, then rebuild the config cache.
 
