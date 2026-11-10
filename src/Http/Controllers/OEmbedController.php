@@ -5,13 +5,18 @@ declare(strict_types=1);
 namespace Hei\ScarlettPlayer\Http\Controllers;
 
 use DateTimeImmutable;
+use Hei\ScarlettPlayer\Data\MediaSource;
 use Hei\ScarlettPlayer\Exceptions\MediaNotFoundException;
+use Hei\ScarlettPlayer\Partners\PartnerGate;
+use Hei\ScarlettPlayer\Partners\PartnerParams;
 use Hei\ScarlettPlayer\Player\EmbedConfig;
 use Hei\ScarlettPlayer\Player\EmbedUrlGenerator;
 use Hei\ScarlettPlayer\ScarlettPlayer;
 use Illuminate\Contracts\Config\Repository;
+use Illuminate\Contracts\Routing\UrlGenerator;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Routing\Exceptions\InvalidSignatureException;
 use Illuminate\Routing\Route;
 use Illuminate\Routing\Router;
 use Throwable;
@@ -32,6 +37,8 @@ class OEmbedController
         private readonly Router $router,
         private readonly Repository $config,
         private readonly EmbedConfig $embedConfig,
+        private readonly PartnerGate $partners,
+        private readonly UrlGenerator $url,
     ) {}
 
     public function show(Request $request): JsonResponse
@@ -62,6 +69,15 @@ class OEmbedController
             abort(404);
         }
 
+        [$width, $height] = $this->dimensions($request);
+
+        if ($target->query->has(PartnerParams::KEY)) {
+            // A partner URL is relative-signed: the absolute check below never runs for it.
+            $html = $this->embeds->iframe($this->partnerSrc($url, $target, $route, $media), $media, $width, $height);
+
+            return $this->response($media, $width, $height, $html);
+        }
+
         $expires = null;
 
         if ($this->embeds->mustSign($media)) {
@@ -73,8 +89,11 @@ class OEmbedController
             $expires = is_numeric($expiry) ? (new DateTimeImmutable)->setTimestamp((int) $expiry) : null;
         }
 
-        [$width, $height] = $this->dimensions($request);
+        return $this->response($media, $width, $height, $this->embeds->embedCode($media, $expires, $width, $height));
+    }
 
+    private function response(MediaSource $media, int $width, int $height, string $html): JsonResponse
+    {
         $data = [
             'version' => '1.0',
             'type' => 'video',
@@ -82,7 +101,7 @@ class OEmbedController
             'provider_url' => url('/'),
             'width' => $width,
             'height' => $height,
-            'html' => $this->embeds->embedCode($media, $expires, $width, $height),
+            'html' => $html,
         ];
 
         if ($media->title !== null) {
@@ -94,6 +113,45 @@ class OEmbedController
         }
 
         return new JsonResponse($data);
+    }
+
+    /**
+     * The verified partner URL as an iframe src, rebuilt and never echoed.
+     *
+     * Status per plan section 5: a missing or bad relative signature (tampered, expired,
+     * appended to) is 401; the shared PartnerGate then refuses an unknown, revoked or
+     * expired partner, a malformed key or protected media without a bounded expiry with 403.
+     * The src is the generator's https root, the matched route path and the verified signed
+     * pairs in their given order (unsigned presentation parameters dropped), so the input's
+     * scheme, host, fragment and unsigned values never reach the markup, and no expiry is
+     * added or changed.
+     */
+    private function partnerSrc(string $url, Request $target, Route $route, MediaSource $media): string
+    {
+        $scheme = parse_url($url, PHP_URL_SCHEME);
+
+        if (is_string($scheme) && ! in_array(strtolower($scheme), ['http', 'https'], true)) {
+            abort(404);
+        }
+
+        $ignore = $this->embedConfig->unsignedParams();
+
+        if (! $target->query->has('signature') || ! $target->hasValidRelativeSignatureWhileIgnoring($ignore)) {
+            abort(401);
+        }
+
+        try {
+            $this->partners->partner($target);
+            $this->partners->assertExpiry($target, $media);
+        } catch (InvalidSignatureException) {
+            abort(403);
+        }
+
+        $parameters = $route->parameters();
+        $pairs = array_diff_key($target->query->all(), array_flip($ignore));
+        $path = $this->url->route(EmbedUrlGenerator::ROUTE, [reset($parameters)], false);
+
+        return $this->url->secure($path.'?'.http_build_query($pairs, '', '&', PHP_QUERY_RFC3986));
     }
 
     private function matchEmbedRoute(Request $target): ?Route

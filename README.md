@@ -123,6 +123,8 @@ migration below. See
 | `scarlett-migrations-diagnostics` | Only the additive diagnostics migration (`decoded_frames_total`, `dropped_frames_total`, indexed `viewer_ref`), for upgrades from 0.7 |
 | `scarlett-migrations-clock` | Only the additive clock-skew migration (`clock_offset_ms`, `clock_source`, `client_occurred_at`), for upgrades from 0.8 |
 | `scarlett-migrations-startstate` | Only the additive start state migration (`scarlett_views.start_state`, `scarlett_view_errors.stalled`), for upgrades from 0.9 |
+| `scarlett-migrations-partners` | Only the partners table migration (`scarlett_partners`), for upgrades from 0.10; see [Partner embeds](#partner-embeds) |
+| `scarlett-migrations-partner-ref` | Only the additive partner attribution migration (`scarlett_views.partner_ref`, indexed), for upgrades from 0.10 |
 | `scarlett-views` | The embed page and Blade component views, to `resources/views/vendor/scarlett` |
 | `scarlett-js` | The JS initialiser, to `resources/js/vendor/scarlett-player/init.js` |
 
@@ -130,7 +132,7 @@ migration below. See
 
 A fresh installation publishes **only** `scarlett-migrations`: from 0.4.0 that folder
 contains the signals upgrade, from 0.5.0 the player 1.22 upgrade, from 0.6.0 the
-canonical gauges upgrade, from 0.8.0 the diagnostics upgrade, from 0.9.0 the clock-skew upgrade and from 0.10.0 the start state upgrade, in order. The upgrade tags are for hosts that installed
+canonical gauges upgrade, from 0.8.0 the diagnostics upgrade, from 0.9.0 the clock-skew upgrade and from 0.10.0 the start state upgrade, and from 0.11.0 the partners table and the partner attribution upgrade, in order. The upgrade tags are for hosts that installed
 before that upgrade existed. Each publishes
 one migration, dated at publish time, so it sorts after create migrations published
 earlier and a fresh `migrate` (a new environment, a test database) creates the tables
@@ -1931,7 +1933,130 @@ oEmbed `video` response whose `html` is `embedCode()`. It honours `maxwidth` and
 answers 404 for a URL that is not this app's embed page, and 501 for a format other than
 `json`. For media that must be signed, the URL has to carry a valid signature (401
 otherwise), and the snippet keeps that URL's expiry, so a lookup never mints a longer-lived
-link.
+link. A URL carrying `scp_key` follows the partner rules under [Partner embeds](#partner-embeds).
+
+### Partner embeds
+
+A **partner** is a site you let embed your media in an iframe, locked to its own domain. Each
+is a row in `scarlett_partners`: a `ref` (lowercase slug, the analytics identity, never
+renamed), a random `key_id`, a name, a strict origin list, an optional `expires_at` (contract
+end) and `revoked_at`. The snippet is an ordinary `/v/{uuid}` iframe URL with one extra signed
+query parameter, `scp_key=<key_id>`. The page answers 403 unless the signature is valid and the
+row exists, is not revoked and has not expired, and its `Content-Security-Policy:
+frame-ancestors` lists **only that partner's origins** (`'none'` when none is valid, never the
+global list, never `*`). The origins are validated again at render time, so a damaged row
+frames nobody instead of everybody.
+
+Origins are CSP source expressions: `https://partner.example`, `https://partner.example:8443`
+or `https://*.partner.example` (`http` only for `localhost` and `127.0.0.1`). No bare `*`, path,
+query, userinfo or whitespace. `https://*.partner.example` excludes the apex
+`partner.example`: a partner on both needs both entries.
+
+```bash
+php artisan scarlett:partners:create acme --name="Acme" --origin=https://acme.example --origin=https://*.acme.example [--expires=2027-06-30]
+php artisan scarlett:partners:update acme [--name=] [--origin=* (replaces the list)] [--expires=] [--clear-expires]
+php artisan scarlett:partners:snippet acme <media id> [--width=] [--height=] [--url] [--expires=] [--root=https://video.example]
+php artisan scarlett:partners:list
+php artisan scarlett:partners:revoke acme [--restore]
+php artisan scarlett:partners:rotate acme
+```
+
+`snippet` prints the iframe (`--url` the bare URL); `ScarlettPlayer::partnerEmbedUrl()` and
+`partnerEmbedCode()` do the same from code. The signature is over the relative URL, so it
+does not depend on the host that minted it: `--root` (default `app.url`) only prefixes the
+origin, and a wrong `APP_URL` cannot invalidate a snippet. A snippet has **no expiry** by
+default: control is on the server, checked on every page load. `--expires` (a date or a number
+of days) makes a temporary URL for one-off promotions, at most 90 days away; it is **required
+for protected media**, and a protected-media partner URL without a bounded `expires` is
+refused at mint, at load and by oEmbed. `snippet` also refuses an unknown, revoked or expired
+partner, `embed.always_sign` off, and a media id outside `[A-Za-z0-9._-]`.
+
+**Requirements.** Both are per deployment, not per media.
+
+- `embed.always_sign` must be `true`. Without it, removing `scp_key` and the signature from a
+  snippet leaves an unlocked plain page for unprotected media. `scarlett:doctor` **fails**
+  without it. Every non-partner embed on the host must then be signed too.
+- `embed.allowed_domains` must not be empty. The lock is not per media: with the global list
+  empty, ordinary signed embed URLs of the same media (share plugin output, `embedCode()`)
+  are still framed by `*`, so a site you meant to exclude can embed the media with one of those.
+  The doctor warns and `snippet` prints a warning.
+
+**Revoking and rotating.** `revoke` takes effect on the next page load (403). `revoke --restore`
+un-revokes **and rotates** the key, so the snippets the revoke killed stay dead; hand the
+partner a new one. `rotate` regenerates the key only. Deleting a row by hand and recreating
+the ref also yields a new key, so no old snippet of that ref works. A page that is already
+loaded keeps its beacon proof (below), so revoking does not stop attribution for up to 24 hours.
+
+**Attribution.** The page beacons through a signed beacon URL carrying the partner ref, the
+media id and a 24 hour expiry. The beacon route verifies it without reading the database and
+sets the server key `scarlett_partner`, and the store writes it once to the indexed
+`scarlett_views.partner_ref`. The partner id therefore comes only from a verified signature,
+never from the browser. A page left open for more than 24 hours starts unattributed views
+(they are still ingested). Whoever holds the global beacon key plus a copied proof URL can
+forge attribution for that one media for up to 24 hours. Attribution needs the Full embed
+build (the default `embed_bundle`): a slim bundle without the analytics plugin drops it, and
+`embed bundle` does not detect that.
+
+`scarlett_partner` is **reserved** for this. A host `ResolvesBeaconContext` that already
+returns that key now throws `InvalidBeaconContextException` (upgrade: rename the key). A host
+custom dimension named `partner` is not touched.
+
+**Embedding pages, headers and caches.**
+
+- Partner pages send `Cache-Control: no-store, private`, and no share embed target (a viewer
+  is not handed the partner's no-expiry URL; the snippet is still readable in the partner's own
+  HTML source). The 403 comes from the framework handler, so the package cannot header it:
+  a CDN or page cache must **not cache `/v/`** (nor non-2xx responses for it), or a revoked
+  partner keeps getting a cached 200.
+- A host middleware adding `X-Frame-Options: SAMEORIGIN`, or a second `Content-Security-Policy`
+  header with `frame-ancestors`, **intersects** with the page's and breaks every partner. The
+  doctor cannot detect this.
+- Redact `signature` and `api_key` in access logs and error tooling: they travel in URLs.
+
+**oEmbed.** For a URL with `scp_key` the lookup always requires a valid signature (401
+otherwise), then the same checks as the page (403 for an unknown, revoked or expired partner,
+a malformed key or protected media without a bounded expiry). The `html` carries the verified
+URL itself, rebuilt, with the presentation parameters dropped: a lookup can neither add nor
+extend an expiry.
+
+**APP_KEY rotation.** Signatures use the app key. While the old key is kept in
+`APP_PREVIOUS_KEYS` every pasted snippet keeps working; once it is dropped **all pasted
+snippets die together**. Re-mint every snippet first and keep `APP_PREVIOUS_KEYS` until the
+partners have pasted the new ones.
+
+**What this cannot do.**
+
+1. `frame-ancestors` is enforced by the **browser**. `curl`, a server-side fetch or a scraper
+   loads the page and reads the playback URL out of it.
+2. Expiry gates the page, not the media: the page prints the playback URL, and only a host
+   resolver returning short-lived signed URLs makes it non-public.
+3. Unprotected media, with `always_sign` off, stays reachable at the plain `/v/{uuid}`. That is
+   why partners require `always_sign`.
+4. It binds the whole ancestor chain: a partner page inside another iframe, an AMP page or a
+   proxy on a different origin will not render.
+5. A snippet is a replayable capability: it works wherever the CSP allows, and anyone viewing
+   the partner's source sees it. Revoke or rotate it.
+6. No `Referer` or `Sec-Fetch-Dest` check is added: weaker (stripped, client-asserted). The
+   controls are CSP plus revocation.
+7. Partner media ids are limited to `[A-Za-z0-9._-]`, and the key is attached to the beacon
+   only on https hosts.
+
+**Known limits.** On SQLite, a `UNIQUE (partner_ref)` declared in the original `CREATE TABLE` of
+`scarlett_views` (a rebuilt table) cannot be dropped by `DROP INDEX`, so rolling back the
+partner ref migration stops there; PostgreSQL and MySQL are handled. Follow-up card HEI-LSP-25.
+Rolling back the partners migration deletes the partner rows, including revocation state;
+rolling back the partner ref migration keeps them.
+
+**Manual check before tagging a release.** The browser tests run on one Chromium: exact
+origin, other port, other host, nested ancestors and empty origins. They cannot express
+Safari, public wildcard hosts, or apex versus `*.subdomain` origins (asserted at header level
+only): open a partner page from each in a real browser first.
+
+**Upgrading from 0.10.** Update the package, then
+`php artisan vendor:publish --tag=scarlett-migrations-partners --tag=scarlett-migrations-partner-ref`,
+`php artisan migrate` and `php artisan queue:restart`. Fresh installs publish only
+`scarlett-migrations`. Until the second migration runs, ingest keeps working without
+attribution and `scarlett:doctor` warns. Hosts with no partners see no change.
 
 ## Queues and workers
 
@@ -2070,6 +2195,8 @@ Prints one row per check and exits non-zero when any check fails (warnings alone
 | beacon signals columns | missing signal columns on views/errors (warn); passes with the complete schema or a custom store; use the signals-only upgrade tag and restart workers |
 | beacon clock columns | missing `clock_offset_ms` or `clock_source` on views, or `client_occurred_at` or `clock_offset_ms` on events or errors (warn); passes with the complete schema or a custom store; publish `--tag=scarlett-migrations-clock`, migrate and restart workers |
 | beacon start state columns | missing `start_state` on views or `stalled` on errors (warn); passes with the complete schema or a custom store; publish `--tag=scarlett-migrations-startstate`, migrate and restart workers |
+| partner embeds | partners exist and `embed.always_sign` is off, or a partner has no origins or an invalid stored origin (fail: the page frames nobody, or the lock is bypassable); partners exist and `embed.allowed_domains` is empty (warn: ordinary signed embed URLs are still framed by `*`); passes with no partners or no `scarlett_partners` table |
+| beacon partner columns | partners exist but `scarlett_views.partner_ref` is missing (warn: beacons ingest without attribution); passes with no partners, no partner table, the column, or a custom store; publish `--tag=scarlett-migrations-partner-ref`, migrate and restart workers |
 | beacon diagnostic columns | missing `decoded_frames_total`, `dropped_frames_total` or `viewer_ref` on views (warn); passes with the complete schema or a custom store; publish `--tag=scarlett-migrations-diagnostics`, migrate and restart workers |
 | beacon seq column | raw-event storage is on but `scarlett_beacon_events.seq` is missing, or the table cannot be inspected (warn); passes when the column exists or `beacons.store_raw_events` is off |
 | beacon context | `beacons.context` is set but is not a class implementing `ResolvesBeaconContext`, or `scarlett_views.server` does not exist, on a table migrated by 0.1 (fail); the table is missing or cannot be inspected (warn) |

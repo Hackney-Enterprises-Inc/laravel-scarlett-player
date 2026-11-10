@@ -6,6 +6,9 @@ namespace Hei\ScarlettPlayer\Http\Controllers;
 
 use Hei\ScarlettPlayer\Data\MediaSource;
 use Hei\ScarlettPlayer\Http\Middleware\ValidateEmbedSignature;
+use Hei\ScarlettPlayer\Partners\PartnerContext;
+use Hei\ScarlettPlayer\Partners\PartnerEmbedUrls;
+use Hei\ScarlettPlayer\Partners\PartnerOrigin;
 use Hei\ScarlettPlayer\Player\EmbedConfig;
 use Hei\ScarlettPlayer\ScarlettPlayer;
 use Illuminate\Contracts\Config\Repository;
@@ -25,6 +28,7 @@ class EmbedController
         private readonly ScarlettPlayer $scarlett,
         private readonly Repository $config,
         private readonly EmbedConfig $embedConfig,
+        private readonly PartnerEmbedUrls $partnerUrls,
     ) {}
 
     public function show(Request $request): Response
@@ -47,15 +51,24 @@ class EmbedController
             $builder->startTime((float) $startTime);
         }
 
+        $partner = $request->attributes->get(PartnerContext::ATTRIBUTE);
+        $partner = $partner instanceof PartnerContext ? $partner : null;
+
         $shareUrl = $request->query('shareUrl');
 
-        if (is_string($shareUrl) && $shareUrl !== '') {
+        // A partner page never offers the share sheet: it would hand any viewer the
+        // partner's own signed, non-expiring URL as the embed target.
+        if ($partner === null && is_string($shareUrl) && $shareUrl !== '') {
             $builder->withShare($shareUrl, $this->canonicalUrl($request));
         }
 
         // The case the CORS recipe exists for: an embed iframe beaconing cross-origin.
         if ($this->beaconsConfigured()) {
             $builder->withAnalytics();
+
+            if ($partner !== null) {
+                $builder->analyticsBeaconUrl($this->partnerBeaconUrl($partner, $media));
+            }
         }
 
         $response = new Response(view('scarlett::embed', [
@@ -64,10 +77,26 @@ class EmbedController
             'canonicalUrl' => $this->canonicalUrl($request),
         ])->render());
 
-        $response->headers->set('Content-Security-Policy', 'frame-ancestors '.$this->frameAncestors());
+        $response->headers->set('Content-Security-Policy', 'frame-ancestors '.$this->frameAncestors($partner));
         $response->headers->set('X-Robots-Tag', 'noindex, nofollow');
 
+        if ($partner !== null) {
+            // A page cache or CDN keyed by URL would keep serving a revoked partner's 200.
+            $response->headers->set('Cache-Control', 'no-store, private');
+        }
+
         return $response;
+    }
+
+    /**
+     * The proof the page hands the player as its beacon URL, so the beacon route can
+     * attribute a view without a database read (the player attaches api_key afterwards,
+     * which the signature ignores). Its absolute root comes from the URL generator, never
+     * from the request.
+     */
+    private function partnerBeaconUrl(PartnerContext $partner, MediaSource $media): string
+    {
+        return $this->partnerUrls->beaconUrl($partner->ref, $media->id);
     }
 
     /**
@@ -89,8 +118,19 @@ class EmbedController
         return $request->url().($query === [] ? '' : '?'.implode('&', $query));
     }
 
-    private function frameAncestors(): string
+    /**
+     * A partner's page is framed by that partner's origins and nothing else: every stored
+     * origin is validated again here, whatever was written to the row, and 'none' is what
+     * is left when none survives. Never the global list, never '*'.
+     */
+    private function frameAncestors(?PartnerContext $partner): string
     {
+        if ($partner !== null) {
+            $origins = PartnerOrigin::validOnly($partner->origins);
+
+            return $origins === [] ? "'none'" : implode(' ', ["'self'", ...$origins]);
+        }
+
         $domains = $this->embedConfig->allowedDomains();
 
         if ($domains === []) {

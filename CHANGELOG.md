@@ -4,6 +4,33 @@ All notable changes to `hei/laravel-scarlett-player` are documented here. The fo
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-11-10
+
+Partner embeds: let a named partner frame a media on its own domain, with server-side revocation and per-partner attribution. No player change: the pin stays 1.27.1. Hosts that do not use partners see no change beyond two migrations they may leave unpublished.
+
+Upgrading from 0.10: update the package, then `php artisan vendor:publish --tag=scarlett-migrations-partners --tag=scarlett-migrations-partner-ref`, `php artisan migrate` and `php artisan queue:restart`. Fresh installs publish only `scarlett-migrations`. Until `scarlett-migrations-partner-ref` runs, ingest keeps working without attribution and `scarlett:doctor` warns once partners exist. To use partners set `embed.always_sign` to `true` (the doctor fails without it) and `embed.allowed_domains` to your own sites. A host `ResolvesBeaconContext` that returns the key `scarlett_partner` now throws `InvalidBeaconContextException`: rename that key. A custom dimension named `partner` is untouched.
+
+### Added
+
+- `scarlett_partners` table and the `Partner` model: `ref`, a random `key_id` (regenerated on rotate and restore), name, strict origin list, `expires_at`, `revoked_at`. Six commands: `scarlett:partners:create`, `update`, `snippet` (with `--root`, and `--expires` capped at 90 days and required for protected media), `list`, `revoke` (`--restore` also rotates) and `rotate`. `ScarlettPlayer::partnerEmbedUrl()` and `partnerEmbedCode()`.
+- Domain lock: a `/v/{uuid}` URL with the signed parameter `scp_key` is checked on every load (unknown, revoked, expired or unsigned answers 403) and framed only by that partner's origins, re-validated at render time (`'none'` when none is valid), with `Cache-Control: no-store, private` and no share embed target. oEmbed answers 401 for a bad signature and 403 for a refused partner, and emits the verified URL rather than a re-minted one.
+- Attribution: a signed 24 hour beacon proof sets the server key `scarlett_partner`, written once to the indexed `scarlett_views.partner_ref`. No database read on the beacon path.
+- Migrations `0001_01_01_000011_create_scarlett_partners_table` and `0001_01_01_000012_add_partner_ref_to_scarlett_views_table`, with publish tags `scarlett-migrations-partners` and `scarlett-migrations-partner-ref`; `beacon upgrade migration order` knows the second.
+- Doctor checks `partner embeds` and `beacon partner columns`.
+- README "Partner embeds": the model, minting, requirements, attribution integrity, caches and headers, APP_KEY rotation, and what the lock cannot do.
+
+### Changed
+
+- `embed.always_sign` and `embed.allowed_domains` are documented as partner requirements; `scp_key`, `scp_ref` and `scp_media` can never be listed in `embed.unsigned_params`.
+- `scarlett_partner` is reserved for the package in `ResolvesBeaconContext` (see the upgrade note).
+- The full `scarlett-migrations` folder holds 12 files (was 10).
+
+### Known limits
+
+- A revoked partner keeps attributing for a page already loaded, for up to 24 hours. A page open longer than 24 hours starts unattributed views.
+- `frame-ancestors` is browser-enforced and expiry does not make the media URL non-public. A CDN or page cache must not cache `/v/`. Safari, public wildcard hosts and apex versus subdomain origins are covered at header level only.
+- SQLite: a table-declared `UNIQUE (partner_ref)` stops the rollback of the partner ref migration. Tracked as HEI-LSP-25.
+
 ## [0.10.1] - 2026-11-09
 
 No migration and no new column. Move the host's `@scarlett-player/*` packages to 1.27.1 with the package update, which is also the new default `player.player_version`; set `SCARLETT_PLAYER_VERSION=1.27.0` to stay on the old bundle. A host that published the config file keeps the old default inside its own copy; edit that line once (below) and later package upgrades move the pin by themselves.

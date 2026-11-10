@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Hei\ScarlettPlayer\Player;
 
 use Hei\ScarlettPlayer\Exceptions\InvalidEmbedConfigException;
+use Hei\ScarlettPlayer\Partners\PartnerParams;
 use Illuminate\Contracts\Config\Repository;
 
 /**
@@ -13,14 +14,28 @@ use Illuminate\Contracts\Config\Repository;
  */
 final class EmbedConfig
 {
-    /** Parameters a signature always covers, whatever unsigned_params says. */
-    public const ALWAYS_SIGNED = ['expires', 'signature'];
+    /**
+     * Parameters a signature always covers, whatever unsigned_params says: the expiry and
+     * the signature itself, and every partner parameter (PartnerParams::SIGNED), so a
+     * partner lock can never be configured away.
+     */
+    public const ALWAYS_SIGNED = ['expires', 'signature', ...PartnerParams::SIGNED];
 
-    private const HOST = '/^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/';
+    private const HOST = '/^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/D';
 
     public function __construct(
         private readonly Repository $config,
     ) {}
+
+    /**
+     * Whether a value is a lowercase host name: dot separated labels of letters, digits
+     * and inner hyphens, at most 253 characters. The one host charset the package shares
+     * (allowed_domains and partner origins).
+     */
+    public static function isHost(string $host): bool
+    {
+        return preg_match(self::HOST, $host) === 1;
+    }
 
     /**
      * embed.allowed_domains as bare lowercase hosts: a scheme, port, path and a leading
@@ -47,7 +62,7 @@ final class EmbedConfig
             $host = (string) preg_replace('#:\d+$#', '', $host);
             $host = (string) preg_replace('#^(\*\.|\.)#', '', $host);
 
-            if (preg_match(self::HOST, $host) !== 1) {
+            if (! self::isHost($host)) {
                 throw InvalidEmbedConfigException::notAHost($entry);
             }
 
