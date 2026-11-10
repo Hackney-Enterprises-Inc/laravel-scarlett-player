@@ -13,6 +13,7 @@ use Hei\ScarlettPlayer\Partners\PartnerOrigin;
 use Hei\ScarlettPlayer\Player\EmbedConfig;
 use Illuminate\Contracts\Config\Repository;
 use Illuminate\Support\Facades\Schema;
+use Throwable;
 
 /**
  * The partner domain lock only holds in a deployment set up for it.
@@ -24,6 +25,9 @@ use Illuminate\Support\Facades\Schema;
  * iframe (FAIL); and embed.allowed_domains should not be empty, because then every
  * ordinary signed embed URL of the same media is still framed by '*' (WARN: the lock is
  * per deployment, not per media, and that limit is documented rather than closed).
+ *
+ * A database that cannot be read is a WARN with the driver's message, never an exception,
+ * matching the `beacon partner columns` check.
  */
 class PartnerEmbedCheck implements Check
 {
@@ -39,11 +43,15 @@ class PartnerEmbedCheck implements Check
 
     public function run(): CheckResult
     {
-        if (! Schema::hasTable('scarlett_partners')) {
-            return CheckResult::pass('No scarlett_partners table: partner embeds are not in use');
-        }
+        try {
+            if (! Schema::hasTable('scarlett_partners')) {
+                return CheckResult::pass('No scarlett_partners table: partner embeds are not in use');
+            }
 
-        $partners = Partner::query()->orderBy('id')->get();
+            $partners = Partner::query()->orderBy('id')->get();
+        } catch (Throwable $e) {
+            return CheckResult::warn('could not inspect partner embeds: '.$e->getMessage());
+        }
 
         if ($partners->isEmpty()) {
             return CheckResult::pass('No partners: partner embeds are not in use');

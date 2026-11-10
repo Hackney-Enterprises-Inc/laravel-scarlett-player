@@ -14,7 +14,7 @@ Upgrading from 0.10: update the package, then `php artisan vendor:publish --tag=
 
 - `scarlett_partners` table and the `Partner` model: `ref`, a random `key_id` (regenerated on rotate and restore), name, strict origin list, `expires_at`, `revoked_at`. Six commands: `scarlett:partners:create`, `update`, `snippet` (with `--root`, and `--expires` capped at 90 days and required for protected media), `list`, `revoke` (`--restore` also rotates) and `rotate`. `ScarlettPlayer::partnerEmbedUrl()` and `partnerEmbedCode()`.
 - Domain lock: a `/v/{uuid}` URL with the signed parameter `scp_key` is checked on every load (unknown, revoked, expired or unsigned answers 403) and framed only by that partner's origins, re-validated at render time (`'none'` when none is valid), with `Cache-Control: no-store, private` and no share embed target. oEmbed answers 401 for a bad signature and 403 for a refused partner, and emits the verified URL rather than a re-minted one.
-- Attribution: a signed 24 hour beacon proof sets the server key `scarlett_partner`, written once to the indexed `scarlett_views.partner_ref`. No database read on the beacon path.
+- Attribution: a signed 24-hour beacon proof sets the payload's own partner ref (recorded in the raw log under `scarlett_partner`; a host must not feed it through `beacons.context`), written once to the indexed `scarlett_views.partner_ref`. No database read on the beacon path.
 - Migrations `0001_01_01_000011_create_scarlett_partners_table` and `0001_01_01_000012_add_partner_ref_to_scarlett_views_table`, with publish tags `scarlett-migrations-partners` and `scarlett-migrations-partner-ref`; `beacon upgrade migration order` knows the second.
 - Doctor checks `partner embeds` and `beacon partner columns`.
 - README "Partner embeds": the model, minting, requirements, attribution integrity, caches and headers, APP_KEY rotation, and what the lock cannot do.
@@ -22,7 +22,7 @@ Upgrading from 0.10: update the package, then `php artisan vendor:publish --tag=
 ### Changed
 
 - `embed.always_sign` and `embed.allowed_domains` are documented as partner requirements; `scp_key`, `scp_ref` and `scp_media` can never be listed in `embed.unsigned_params`.
-- `scarlett_partner` is reserved for the package in `ResolvesBeaconContext` (see the upgrade note).
+- `scarlett_partner` is reserved for the package in `ResolvesBeaconContext` (see the upgrade note) and on the wire: a flat `scarlett_partner` key in a beacon body is dropped, not kept as a custom dimension.
 - The full `scarlett-migrations` folder holds 12 files (was 10).
 
 ### Known limits

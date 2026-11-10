@@ -14,6 +14,8 @@ use Illuminate\Console\Command;
  */
 class UpdateCommand extends Command
 {
+    use NormalisesInput;
+
     protected $signature = 'scarlett:partners:update
         {ref : The partner ref}
         {--name= : New display name}
@@ -25,8 +27,7 @@ class UpdateCommand extends Command
 
     public function handle(): int
     {
-        $ref = $this->argument('ref');
-        $ref = is_string($ref) ? $ref : '';
+        $ref = $this->text($this->argument('ref'));
         $partner = Partner::query()->where('ref', $ref)->first();
 
         if ($partner === null) {
@@ -35,8 +36,8 @@ class UpdateCommand extends Command
             return self::FAILURE;
         }
 
-        $name = $this->option('name');
-        $origin = $this->option('origin');
+        $name = $this->text($this->option('name'));
+        $origin = $this->items($this->option('origin'));
         $clear = (bool) $this->option('clear-expires');
 
         if ($clear && $this->option('expires') !== null) {
@@ -46,7 +47,7 @@ class UpdateCommand extends Command
         }
 
         try {
-            $origins = is_array($origin) && $origin !== [] ? CreateCommand::origins($origin) : null;
+            $origins = $origin !== [] ? CreateCommand::origins($origin) : null;
             $expires = CreateCommand::moment($this->option('expires'));
         } catch (InvalidPartnerException $e) {
             $this->error($e->getMessage());
@@ -54,13 +55,13 @@ class UpdateCommand extends Command
             return self::FAILURE;
         }
 
-        if ($origins === null && $expires === null && ! $clear && ! (is_string($name) && $name !== '')) {
+        if ($origins === null && $expires === null && ! $clear && $name === '') {
             $this->error('Nothing to update: give --name, --origin, --expires or --clear-expires.');
 
             return self::FAILURE;
         }
 
-        if (is_string($name) && $name !== '') {
+        if ($name !== '') {
             $partner->name = $name;
         }
 

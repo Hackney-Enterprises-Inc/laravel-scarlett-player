@@ -21,6 +21,8 @@ use Illuminate\Console\Command;
  */
 class SnippetCommand extends Command
 {
+    use NormalisesInput;
+
     protected $signature = 'scarlett:partners:snippet
         {ref : The partner ref}
         {media : The media id}
@@ -34,12 +36,10 @@ class SnippetCommand extends Command
 
     public function handle(ScarlettPlayer $player, EmbedConfig $embedConfig): int
     {
-        $ref = $this->argument('ref');
-        $media = $this->argument('media');
-        $ref = is_string($ref) ? $ref : '';
-        $media = is_string($media) ? $media : '';
-        $root = $this->option('root');
-        $root = is_string($root) && $root !== '' ? $root : null;
+        $ref = $this->text($this->argument('ref'));
+        $media = $this->text($this->argument('media'));
+        $root = $this->text($this->option('root'));
+        $root = $root !== '' ? $root : null;
 
         try {
             $expires = CreateCommand::moment($this->option('expires'));
@@ -72,8 +72,8 @@ class SnippetCommand extends Command
 
     private function dimension(string $name, int $default): int|string
     {
-        $value = $this->option($name);
+        $value = $this->text($this->option($name));
 
-        return is_string($value) && $value !== '' ? $value : $default;
+        return $value !== '' ? $value : $default;
     }
 }

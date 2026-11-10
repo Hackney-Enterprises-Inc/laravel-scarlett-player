@@ -9,6 +9,7 @@ use Hei\ScarlettPlayer\Facades\ScarlettPlayer;
 use Hei\ScarlettPlayer\Models\Partner;
 use Hei\ScarlettPlayer\Tests\Fixtures\Provider\ArrayResolver;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\URL;
 
 /*
@@ -42,6 +43,17 @@ it('passes with no scarlett_partners table, without an exception', function (): 
     $result = partnerCheck();
 
     expect($result->status)->toBe(CheckStatus::Pass)->and($result->message)->toContain('No scarlett_partners table');
+});
+
+it('warns instead of throwing when the database connection fails', function (): void {
+    Schema::shouldReceive('hasTable')
+        ->with('scarlett_partners')
+        ->andThrow(new RuntimeException('SQLSTATE[HY000] [2002] Connection refused'));
+
+    $result = partnerCheck();
+
+    expect($result->status)->toBe(CheckStatus::Warn)
+        ->and($result->message)->toContain('could not inspect partner embeds', 'Connection refused');
 });
 
 it('passes with the table and no partners, whatever the embed config', function (): void {

@@ -392,8 +392,14 @@ final readonly class BeaconPayload
             // data (index.ts ~210), so a dimension called `duration` or `fatal` on
             // an event that does not set it arrives under a known name. It is kept
             // as a custom dimension rather than refused.
-            $custom[$key] = $value;
             $legacyCustom[$key] = $value;
+
+            // The partner name is reserved on the wire: only a verified proof yields
+            // it, so a browser's flat key is never a custom dimension. It stays in the
+            // hash basis, so the body hash of the received body is unchanged.
+            if ($key !== self::PARTNER_KEY) {
+                $custom[$key] = $value;
+            }
         }
 
         $legacyBody = array_replace([
@@ -469,15 +475,15 @@ final readonly class BeaconPayload
     }
 
     /**
-     * The same beacon attributed to a verified partner. A flat `scarlett_partner` key
-     * the browser sent is stripped from the custom dimensions, so it cannot sit beside
-     * the verified ref. The body hash is unchanged.
+     * The same beacon attributed to a verified partner. The name `scarlett_partner` is
+     * reserved on the wire (never a custom dimension), so only this ref is recorded
+     * under it. The body hash is unchanged.
      */
     public function withVerifiedPartner(PartnerBeaconContext $proof): self
     {
         $copy = (new self(
             $this->event, $this->timestamp, $this->viewId, $this->sessionId, $this->viewerId,
-            $this->videoId, $this->context, $this->fields, array_diff_key($this->custom, [self::PARTNER_KEY => true]),
+            $this->videoId, $this->context, $this->fields, $this->custom,
             $this->ip, $this->server, $this->owned, $this->bodyHash,
         ))->carryLegacy($this);
 
@@ -563,11 +569,8 @@ final readonly class BeaconPayload
      */
     public function withCustom(array $custom): self
     {
-        $custom = array_diff_key($custom, array_flip($this->owned));
-
-        if (isset($this->partnerRef)) {
-            unset($custom[self::PARTNER_KEY]);
-        }
+        // The partner name is reserved: never a custom dimension, verified or not.
+        $custom = array_diff_key($custom, array_flip($this->owned), [self::PARTNER_KEY => true]);
 
         // A restored value was captured from the custom dimensions, so the map the
         // pipeline hands back decides it: removed or retyped there, it is redacted.
@@ -764,7 +767,8 @@ final readonly class BeaconPayload
             videoId: (string) $data['videoId'],
             context: (array) ($data['context'] ?? []),
             fields: (array) ($data['fields'] ?? []),
-            custom: (array) ($data['custom'] ?? []),
+            // A job queued by 0.11.0 before the name was reserved may hold the browser's key.
+            custom: array_diff_key((array) ($data['custom'] ?? []), [self::PARTNER_KEY => true]),
             ip: isset($data['ip']) ? (string) $data['ip'] : null,
             server: $server,
             owned: array_values(array_map('strval', (array) ($data['owned'] ?? array_keys($server)))),

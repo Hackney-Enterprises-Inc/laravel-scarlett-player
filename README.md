@@ -132,7 +132,9 @@ migration below. See
 
 A fresh installation publishes **only** `scarlett-migrations`: from 0.4.0 that folder
 contains the signals upgrade, from 0.5.0 the player 1.22 upgrade, from 0.6.0 the
-canonical gauges upgrade, from 0.8.0 the diagnostics upgrade, from 0.9.0 the clock-skew upgrade and from 0.10.0 the start state upgrade, and from 0.11.0 the partners table and the partner attribution upgrade, in order. The upgrade tags are for hosts that installed
+canonical gauges upgrade, from 0.8.0 the diagnostics upgrade, from 0.9.0 the clock-skew
+upgrade, from 0.10.0 the start state upgrade and from 0.11.0 the partners table and the
+partner attribution upgrade, in order. The upgrade tags are for hosts that installed
 before that upgrade existed. Each publishes
 one migration, dated at publish time, so it sorts after create migrations published
 earlier and a fresh `migrate` (a new environment, a test database) creates the tables
@@ -148,19 +150,26 @@ older string form) has it off and gets the file under its `0001_01_01_...` name:
 `'migrations' => ['table' => 'migrations', 'update_date_on_publish' => true]` before
 publishing, or write your own dated migration (below).
 
-All six upgrade migrations are idempotent (the first three from 0.6.0, the diagnostics,
-clock and start state ones from their first release). A column or index that already exists is left alone, so publishing a tag twice (each publish adds another dated copy), a database that
-already ran an earlier copy, or a host that added the columns itself all migrate as a
-no-op. The signals migration adds `qoe_version` first, on its own, and marks existing
+All seven upgrade migrations are idempotent (the first three from 0.6.0, the diagnostics,
+clock, start state and partner attribution ones from their first release). A column or
+index that already exists is left alone, so publishing a tag twice (each publish adds
+another dated copy), a database that already ran an earlier copy, or a host that added the
+columns itself all migrate as a no-op. The two partner migrations are idempotent and
+resumable in the same way: the partners table migration creates the table only when it is
+absent and re-adds either missing UNIQUE index on a rerun, and the partner attribution
+migration skips an existing column and index. The signals migration adds `qoe_version`
+first, on its own, and marks existing
 scores as QoE v1 straight after, so the backfill runs in the run that adds the column.
 MySQL schema changes are not transactional; if a run stops partway, migrate again: a
 rerun that finds `qoe_version` as the only signals column cannot tell whether the
 backfill finished, so it marks scored rows still without a version as v1 again. Rows that
-already carry a version are never changed. Rolling a copy back drops its columns only when no other copy of the
+already carry a version are never changed. Rolling a copy back drops its columns (or, for
+the partners table migration, the table) only when no other copy of the
 same upgrade (a migration whose name ends `_add_signals_to_scarlett_tables`,
 `_add_reconnects_to_scarlett_tables`, `_add_gauges_to_scarlett_tables`,
-`_add_diagnostics_to_scarlett_tables`, `_add_clock_correction_to_scarlett_tables` or
-`_add_start_state_and_stalled_to_scarlett_tables`) is still recorded as run.
+`_add_diagnostics_to_scarlett_tables`, `_add_clock_correction_to_scarlett_tables`,
+`_add_start_state_and_stalled_to_scarlett_tables`, `_add_partner_ref_to_scarlett_views_table`
+or `_create_scarlett_partners_table`) is still recorded as run.
 
 **Published with 0.4.x or 0.5.0?** Those tags wrote the fixed names
 `0001_01_01_000005_add_signals_to_scarlett_tables.php` and
@@ -187,9 +196,11 @@ order and there is nothing to repair.
 
 **Owning the schema instead.** A host that writes its own dated migrations can copy the
 column lists from the upgrade sections below (every column nullable; `*_at` columns are
-`dateTime` with precision 3) and skip the tags. Name the file with the package's suffix
+`dateTime` with precision 3) and the `scarlett_partners` table from
+[Partner embeds](#partner-embeds), and skip the tags. Name the file with the package's
+suffix
 (`..._add_signals_to_scarlett_tables.php`, `..._add_reconnects_to_scarlett_tables.php`,
-`..._add_gauges_to_scarlett_tables.php`, `..._add_diagnostics_to_scarlett_tables.php`, `..._add_clock_correction_to_scarlett_tables.php`, `..._add_start_state_and_stalled_to_scarlett_tables.php`) if a published copy may also run, so a rollback of that copy keeps your columns.
+`..._add_gauges_to_scarlett_tables.php`, `..._add_diagnostics_to_scarlett_tables.php`, `..._add_clock_correction_to_scarlett_tables.php`, `..._add_start_state_and_stalled_to_scarlett_tables.php`, `..._add_partner_ref_to_scarlett_views_table.php` or `..._create_scarlett_partners_table.php`) if a published copy may also run, so a rollback of that copy keeps your columns (or, for the partners table, your table).
 
 ### Routes
 
@@ -1988,8 +1999,9 @@ the ref also yields a new key, so no old snippet of that ref works. A page that 
 loaded keeps its beacon proof (below), so revoking does not stop attribution for up to 24 hours.
 
 **Attribution.** The page beacons through a signed beacon URL carrying the partner ref, the
-media id and a 24 hour expiry. The beacon route verifies it without reading the database and
-sets the server key `scarlett_partner`, and the store writes it once to the indexed
+media id and a 24-hour expiry. The beacon route verifies it without reading the database and
+sets the payload's own partner ref (recorded in the raw log under `scarlett_partner`, not in
+the server context), and the store writes it once to the indexed
 `scarlett_views.partner_ref`. The partner id therefore comes only from a verified signature,
 never from the browser. A page left open for more than 24 hours starts unattributed views
 (they are still ingested). Whoever holds the global beacon key plus a copied proof URL can
@@ -1998,8 +2010,11 @@ build (the default `embed_bundle`): a slim bundle without the analytics plugin d
 `embed bundle` does not detect that.
 
 `scarlett_partner` is **reserved** for this. A host `ResolvesBeaconContext` that already
-returns that key now throws `InvalidBeaconContextException` (upgrade: rename the key). A host
-custom dimension named `partner` is not touched.
+returns that key now throws `InvalidBeaconContextException` (upgrade: rename the key); a host
+must not feed the partner through `beacons.context`. The name is also reserved on the wire: a
+`scarlett_partner` key in a browser's beacon body is dropped, never kept as a custom
+dimension, so only a verified proof ever yields it in the raw log. A host custom dimension
+named `partner` is not touched.
 
 **Embedding pages, headers and caches.**
 

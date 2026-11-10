@@ -19,6 +19,8 @@ use Illuminate\Support\Carbon;
  */
 class CreateCommand extends Command
 {
+    use NormalisesInput;
+
     protected $signature = 'scarlett:partners:create
         {ref : Lowercase slug, at most 64 characters (the analytics identity; it cannot be renamed)}
         {--name= : Display name, defaults to the ref}
@@ -29,8 +31,7 @@ class CreateCommand extends Command
 
     public function handle(): int
     {
-        $ref = $this->argument('ref');
-        $ref = is_string($ref) ? $ref : '';
+        $ref = $this->text($this->argument('ref'));
 
         try {
             if (! PartnerParams::isRef($ref)) {
@@ -51,11 +52,11 @@ class CreateCommand extends Command
             return self::FAILURE;
         }
 
-        $name = $this->option('name');
+        $name = $this->text($this->option('name'));
 
         Partner::query()->create([
             'ref' => $ref,
-            'name' => is_string($name) && $name !== '' ? $name : $ref,
+            'name' => $name !== '' ? $name : $ref,
             'origins' => $origins,
             'expires_at' => $expires,
         ]);

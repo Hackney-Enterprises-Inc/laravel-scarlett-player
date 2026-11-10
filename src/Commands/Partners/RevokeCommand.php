@@ -16,6 +16,8 @@ use Illuminate\Support\Facades\Date;
  */
 class RevokeCommand extends Command
 {
+    use NormalisesInput;
+
     protected $signature = 'scarlett:partners:revoke
         {ref : The partner ref}
         {--restore : Un-revoke the partner and rotate its key, so old snippets stay dead}';
@@ -24,8 +26,7 @@ class RevokeCommand extends Command
 
     public function handle(): int
     {
-        $ref = $this->argument('ref');
-        $ref = is_string($ref) ? $ref : '';
+        $ref = $this->text($this->argument('ref'));
         $partner = Partner::query()->where('ref', $ref)->first();
 
         if ($partner === null) {

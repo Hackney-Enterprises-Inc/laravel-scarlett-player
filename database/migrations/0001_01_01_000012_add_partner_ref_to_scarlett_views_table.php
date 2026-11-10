@@ -9,8 +9,10 @@ use Illuminate\Support\Facades\Schema;
 
 /*
  * Partner attribution (0.11.0). partner_ref is the ref of the partner whose signed
- * embed produced the view, copied once per view from the verified server context key
- * scarlett_partner and indexed so a partner's views can be listed. It is not a
+ * embed produced the view, copied once per view from the payload's own verified
+ * partner ref (BeaconPayload::partnerRef(), never part of the server context map; the
+ * raw log records it under scarlett_partner) and indexed so a partner's views can be
+ * listed. It is not a
  * foreign key: the analytics row outlives the partner. Existing rows are not
  * backfilled.
  *

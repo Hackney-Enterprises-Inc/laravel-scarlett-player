@@ -13,14 +13,15 @@ use Illuminate\Console\Command;
  */
 class RotateCommand extends Command
 {
+    use NormalisesInput;
+
     protected $signature = 'scarlett:partners:rotate {ref : The partner ref}';
 
     protected $description = 'Rotate a Scarlett embed partner key, so existing snippets stop working';
 
     public function handle(): int
     {
-        $ref = $this->argument('ref');
-        $ref = is_string($ref) ? $ref : '';
+        $ref = $this->text($this->argument('ref'));
         $partner = Partner::query()->where('ref', $ref)->first();
 
         if ($partner === null) {

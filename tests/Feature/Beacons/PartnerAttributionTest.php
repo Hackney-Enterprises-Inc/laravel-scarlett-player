@@ -247,12 +247,32 @@ describe('an unverified beacon', function (): void {
         }
     });
 
-    it('keeps a flat scarlett_partner body key as a custom dimension and never reads it', function (): void {
-        postPartnerBeacon($this, '/api/scarlett/beacons?api_key='.urlencode(TestCase::BEACON_KEY), partnerBody('v-spoof', extra: ['scarlett_partner' => 'x']))->assertNoContent();
+    it('drops a flat scarlett_partner body key, since the name is reserved on the wire', function (): void {
+        postPartnerBeacon($this, '/api/scarlett/beacons?api_key='.urlencode(TestCase::BEACON_KEY), partnerBody('v-spoof', extra: ['scarlett_partner' => 'x', 'plan' => 'ppv']))->assertNoContent();
 
         $row = partnerViewRow('v-spoof');
         expect($row->partner_ref)->toBeNull()
-            ->and(json_decode((string) $row->custom, true))->toBe(['scarlett_partner' => 'x']);
+            ->and(json_decode((string) $row->custom, true))->toBe(['plan' => 'ppv']);
+    });
+
+    it('never puts a flat scarlett_partner key in toArray(), through any path', function (): void {
+        $payload = BeaconPayload::fromArray(partnerBody('v-flat', extra: ['scarlett_partner' => 'x', 'partner' => 'host-dim']));
+        $restored = unserialize(serialize($payload));
+
+        expect($payload->toArray())->not->toHaveKey('scarlett_partner')
+            ->and($payload->toArray()['partner'])->toBe('host-dim')
+            ->and($restored->toArray())->not->toHaveKey('scarlett_partner')
+            ->and($restored->toArray()['partner'])->toBe('host-dim')
+            ->and($payload->withCustom(['scarlett_partner' => 'y', 'partner' => 'p'])->toArray())->not->toHaveKey('scarlett_partner')
+            ->and($payload->withCustom(['partner' => 'p'])->toArray()['partner'])->toBe('p');
+    });
+
+    it('drops the key from a payload queued by an older package that kept it as custom', function (): void {
+        $old = new BeaconPayload('viewStart', 1, 'v-old', 's', 'u', 'm', custom: ['scarlett_partner' => 'x', 'partner' => 'host-dim']);
+        $restored = unserialize(serialize($old));
+
+        expect($restored->toArray())->not->toHaveKey('scarlett_partner')
+            ->and($restored->toArray()['partner'])->toBe('host-dim');
     });
 
     // The duplicates break the signature first (it covers every raw pair); the guard
@@ -290,6 +310,15 @@ describe('a verified beacon and the flat scarlett_partner key', function (): voi
         expect($row->partner_ref)->toBe('acme')
             ->and(json_decode((string) $row->custom, true))->toBe(['plan' => 'ppv'])
             ->and($row->server)->toBeNull();
+    });
+
+    it('carries the verified ref, not the browser value, in toArray()', function (): void {
+        $fake = new FakeBeaconStore;
+        app()->instance(BeaconStore::class, $fake);
+
+        postPartnerBeacon($this, withApiKey(partnerBeaconUrl('acme')), partnerBody('v-arr', extra: ['scarlett_partner' => 'evil']))->assertNoContent();
+
+        $fake->assertRecorded(fn (BeaconPayload $p): bool => $p->toArray()['scarlett_partner'] === 'acme' && ! in_array('evil', $p->toArray(), true));
     });
 });
 
