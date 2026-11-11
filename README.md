@@ -2060,7 +2060,10 @@ partners have pasted the new ones.
 `scarlett_views` (a rebuilt table) cannot be dropped by `DROP INDEX`, so rolling back the
 partner ref migration stops there; PostgreSQL and MySQL are handled. Follow-up card HEI-LSP-25.
 Rolling back the partners migration deletes the partner rows, including revocation state;
-rolling back the partner ref migration keeps them.
+rolling back the partner ref migration keeps them. The partner ref migration refuses a unique
+index (or UNIQUE constraint) on exactly `scarlett_views.partner_ref`, because one partner has
+many views: it throws `PartnerRefIndexException` without changing anything, so drop that index
+and run `php artisan migrate` again.
 
 **Manual check before tagging a release.** The browser tests run on one Chromium: exact
 origin, other port, other host, nested ancestors and empty origins. They cannot express

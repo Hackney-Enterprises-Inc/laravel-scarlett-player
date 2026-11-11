@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Hei\ScarlettPlayer\Exceptions\InvalidPartnerException;
+use Hei\ScarlettPlayer\Exceptions\PartnerRefIndexException;
 use Hei\ScarlettPlayer\Exceptions\UpgradeMigrationOrderException;
 use Hei\ScarlettPlayer\Models\Partner;
 use Hei\ScarlettPlayer\Partners\PartnerGate;
@@ -15,7 +16,9 @@ use Illuminate\Support\Facades\Schema;
 
 /*
  * Migrations 11 (create scarlett_partners) and 12 (partner_ref on scarlett_views):
- * idempotent, the same index predicate both ways, and a rollback that only the last
+ * idempotent for an absent or ordinary index, a unique index on exactly partner_ref
+ * refused with a named exception and no change (never repaired or dropped), a rollback
+ * that drops every index on exactly partner_ref, and a rollback that only the last
  * recorded copy of each is allowed to act on.
  */
 
@@ -156,16 +159,52 @@ it('leaves a differently named index on partner_ref alone and rolls back on ever
         ->and(Schema::hasIndex('scarlett_views', 'host_partner_lookup'))->toBeFalse();
 });
 
-it('rolls back over every kind of equivalent index on partner_ref', function (string $kind): void {
+it('is idempotent over an ordinary index on partner_ref and rolls it back', function (): void {
     partnersMigrationViews();
+    Schema::table('scarlett_views', function ($table): void {
+        $table->string('partner_ref', 64)->nullable();
+        $table->index('partner_ref', 'host_partner_lookup');
+    });
+
+    (require PARTNERS_REF)->up();
+
+    expect(partnersMigrationRefIndexNames())->toBe(['host_partner_lookup']);
+
+    (require PARTNERS_REF)->up();
+
+    expect(partnersMigrationRefIndexNames())->toBe(['host_partner_lookup']);
+
+    (require PARTNERS_REF)->down();
+
+    expect(Schema::hasColumn('scarlett_views', 'partner_ref'))->toBeFalse()
+        ->and(Schema::hasIndex('scarlett_views', ['partner_ref']))->toBeFalse();
+});
+
+/** @return list<string> */
+function partnersMigrationRefIndexNames(): array
+{
+    $names = [];
+
+    foreach (Schema::getIndexes('scarlett_views') as $index) {
+        if (! $index['primary'] && array_map('strtolower', $index['columns']) === ['partner_ref']) {
+            $names[] = $index['name'];
+        }
+    }
+
+    sort($names);
+
+    return $names;
+}
+
+/** A host's unique index on partner_ref, of the given kind, on a table that already has the column. */
+function partnersMigrationHostUnique(string $kind): void
+{
     Schema::table('scarlett_views', function ($table) use ($kind): void {
         $table->string('partner_ref', 64)->nullable();
 
         if ($kind === 'constraint') {
             // A UNIQUE constraint: on PostgreSQL its backing index cannot be dropped alone.
             $table->unique('partner_ref', 'host_partner_unique');
-        } elseif ($kind === 'ordinary') {
-            $table->index('partner_ref', 'host_partner_lookup');
         }
     });
 
@@ -173,16 +212,118 @@ it('rolls back over every kind of equivalent index on partner_ref', function (st
         DB::statement('create unique index host_partner_standalone on scarlett_views (partner_ref)');
     }
 
+    if ($kind === 'package-named') {
+        DB::statement('create unique index scarlett_views_partner_ref_index on scarlett_views (partner_ref)');
+    }
+}
+
+/** @return array{columns: list<string>, indexes: list<string>} */
+function partnersMigrationSnapshot(): array
+{
+    $columns = Schema::getColumnListing('scarlett_views');
+    $indexes = array_map(
+        fn (array $index): string => $index['name'].'('.implode(',', $index['columns']).')'.($index['unique'] ? ' unique' : ''),
+        Schema::getIndexes('scarlett_views'),
+    );
+
+    sort($columns);
+    sort($indexes);
+
+    return ['columns' => $columns, 'indexes' => $indexes];
+}
+
+it('refuses a unique index on partner_ref with the named exception and changes nothing', function (string $kind): void {
+    partnersMigrationViews();
+    partnersMigrationHostUnique($kind);
+    $before = partnersMigrationSnapshot();
+    $name = ['standalone' => 'host_partner_standalone', 'constraint' => 'host_partner_unique', 'package-named' => 'scarlett_views_partner_ref_index'][$kind];
+
+    $thrown = null;
+
+    try {
+        (require PARTNERS_REF)->up();
+    } catch (Throwable $e) {
+        $thrown = $e;
+    }
+
+    expect($thrown)->toBeInstanceOf(PartnerRefIndexException::class)
+        ->and($thrown->getMessage())->toContain('partner_ref', 'one partner has many views', $name, 'drop')
+        ->and(partnersMigrationSnapshot())->toBe($before);
+
+    // A retry refuses again, still with no change.
+    expect(fn () => (require PARTNERS_REF)->up())->toThrow(PartnerRefIndexException::class)
+        ->and(partnersMigrationSnapshot())->toBe($before);
+})->with(['standalone', 'constraint', 'package-named']);
+
+it('leaves the host unique index as the only thing refusing a second view for one partner', function (): void {
+    partnersMigrationViews();
+    partnersMigrationHostUnique('standalone');
+
+    expect(fn () => (require PARTNERS_REF)->up())->toThrow(PartnerRefIndexException::class);
+
+    $view = fn (string $id): array => ['view_id' => $id, 'session_id' => 's', 'viewer_id' => 'v', 'video_id' => 'm', 'partner_ref' => 'acme', 'created_at' => now(), 'updated_at' => now()];
+
+    DB::table('scarlett_views')->insert($view('one'));
+
+    expect(fn () => DB::table('scarlett_views')->insert($view('two')))->toThrow(QueryException::class);
+
+    // Dropping the host's index and rerunning is the documented fix.
+    Schema::table('scarlett_views', function ($table): void {
+        $table->dropIndex('host_partner_standalone');
+    });
+    (require PARTNERS_REF)->up();
+    DB::table('scarlett_views')->insert($view('two'));
+
+    expect(DB::table('scarlett_views')->where('partner_ref', 'acme')->count())->toBe(2);
+});
+
+it('does not refuse a composite unique index that merely includes partner_ref', function (): void {
+    partnersMigrationViews();
+    Schema::table('scarlett_views', function ($table): void {
+        $table->string('partner_ref', 64)->nullable();
+        $table->unique(['partner_ref', 'video_id'], 'host_partner_video_unique');
+    });
+
     (require PARTNERS_REF)->up();
 
-    expect(Schema::hasIndex('scarlett_views', ['partner_ref']))->toBeTrue()
-        ->and(Schema::hasIndex('scarlett_views', 'scarlett_views_partner_ref_index'))->toBeFalse();
+    expect(Schema::hasIndex('scarlett_views', 'scarlett_views_partner_ref_index'))->toBeTrue()
+        ->and(Schema::hasIndex('scarlett_views', 'host_partner_video_unique'))->toBeTrue();
+});
 
+it('adds the column and the index again after a rollback, since no unique index can exist without the column', function (): void {
+    partnersMigrationViews();
+
+    (require PARTNERS_REF)->up();
+    (require PARTNERS_REF)->down();
+
+    // No column, so no unique index can exist and up() adds both.
+    expect(Schema::hasColumn('scarlett_views', 'partner_ref'))->toBeFalse();
+
+    (require PARTNERS_REF)->up();
+
+    expect(Schema::hasColumn('scarlett_views', 'partner_ref'))->toBeTrue();
+});
+
+it('removes the column, every index on it and keeps partner rows after a successful up', function (string $start): void {
+    partnersMigrationViews();
+    (require PARTNERS_CREATE)->up();
+
+    if ($start === 'ordinary') {
+        Schema::table('scarlett_views', function ($table): void {
+            $table->string('partner_ref', 64)->nullable();
+            $table->index('partner_ref', 'host_partner_lookup');
+        });
+    }
+
+    DB::table('scarlett_partners')->insert(partnersMigrationRow());
+
+    (require PARTNERS_REF)->up();
     (require PARTNERS_REF)->down();
 
     expect(Schema::hasColumn('scarlett_views', 'partner_ref'))->toBeFalse()
-        ->and(Schema::hasIndex('scarlett_views', ['partner_ref']))->toBeFalse();
-})->with(['ordinary', 'standalone', 'constraint']);
+        ->and(partnersMigrationRefIndexNames())->toBe([])
+        ->and(DB::table('scarlett_partners')->count())->toBe(1);
+})->with(['absent', 'ordinary']);
 
 it('keeps partner rows when migration 12 rolls back', function (): void {
     partnersMigrationViews();
