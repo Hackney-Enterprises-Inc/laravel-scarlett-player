@@ -18,9 +18,13 @@ Upgrading from 0.10: update the package, then `php artisan vendor:publish --tag=
 - Migrations `0001_01_01_000011_create_scarlett_partners_table` and `0001_01_01_000012_add_partner_ref_to_scarlett_views_table`, with publish tags `scarlett-migrations-partners` and `scarlett-migrations-partner-ref`; `beacon upgrade migration order` knows the second.
 - Doctor checks `partner embeds` and `beacon partner columns`.
 - README "Partner embeds": the model, minting, requirements, attribution integrity, caches and headers, APP_KEY rotation, and what the lock cannot do.
+- Ready for the player 1.28.0 embed addons: `PlayerConfigBuilder::hasSplitAddons()` and `SPLIT_ADDONS_SINCE`. On a `player.player_version` of 1.28.0 or later, `embedAddonUrls()` also lists `embed.addon.analytics` (analytics on), `embed.addon.share` (a share URL set) and `embed.addon.media-session` (a titled player), after chapters and clips, in the bundle's directory and flavour. The pin must be plain `major.minor.patch` and is compared as numbers; `latest`, `dev` or any other pin loads none of the three. Inert on the default pin: 1.27.1 loads exactly what it loaded before.
 
 ### Changed
 
+- The embed page (`embed.blade.php`) now loads the files `embedAddonUrls()` lists after the bundle, as the Blade component does. Nothing changes on a pin below 1.28.0, where the page never has chapters or clips and so loads the bundle alone; from 1.28.0 it loads the analytics, share and media-session addons its config needs, and a partner page never the share addon. A host that published the view (`--tag=scarlett-views`) should republish it or add the loop before pinning 1.28.0 or later.
+- On a pin of 1.28.0 or later, a host on the Video or Audio build starts receiving beacons, because the analytics addon now loads (those builds ignore analytics on 1.27.1); a Video build also gains a media session on titled media. The Audio build gets no share or media-session addon (it bundles its own media session and has no video share UI), and no build gets the share addon when controls are off.
+- A pin with a leading zero in any part (`01.28.0`, `1.028.0`, `1.28.00`) is not a version for `hasSplitAddons()`.
 - `embed.always_sign` and `embed.allowed_domains` are documented as partner requirements; `scp_key`, `scp_ref` and `scp_media` can never be listed in `embed.unsigned_params`.
 - `scarlett_partner` is reserved for the package in `ResolvesBeaconContext` (see the upgrade note) and on the wire: a flat `scarlett_partner` key in a beacon body is dropped, not kept as a custom dimension.
 - The full `scarlett-migrations` folder holds 12 files (was 10).

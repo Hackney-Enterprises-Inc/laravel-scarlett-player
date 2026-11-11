@@ -305,6 +305,32 @@ it('adds no share embed target to a partner page even when shareUrl is present',
         ->assertDontSee('data-share-url', false);
 });
 
+it('loads the analytics addon after the bundle on a 1.28.0 pin, and never a share addon', function (): void {
+    config()->set('scarlett-player.player.player_version', '1.28.0');
+    $partner = partnerRow();
+
+    $content = (string) $this->get(partnerPath($partner).'&shareUrl='.urlencode('https://partner.example/watch'))->assertOk()->getContent();
+    $base = 'https://cdn.example.test/scarlett-player/v1.28.0';
+
+    preg_match_all('#<script src="([^"]+)"#', $content, $scripts);
+
+    expect($scripts[1])->toBe(["{$base}/embed.js", "{$base}/embed.addon.analytics.js"])
+        ->and($content)->toContain('<script src="'.$base.'/embed.addon.analytics.js" type="module"></script>')
+        ->and($content)->not->toContain('embed.addon.share')
+        ->and(partnerPageBeaconUrl($this->get(partnerPath($partner))))->toContain('scp_ref=acme');
+});
+
+it('loads no addon on a partner page on the default pin, or on 1.28.0 with the beacons off', function (): void {
+    $partner = partnerRow();
+
+    expect((string) $this->get(partnerPath($partner))->assertOk()->getContent())->not->toContain('embed.addon.');
+
+    config()->set('scarlett-player.player.player_version', '1.28.0');
+    config()->set('scarlett-player.beacons.enabled', false);
+
+    expect((string) $this->get(partnerPath($partner))->assertOk()->getContent())->not->toContain('embed.addon.');
+});
+
 it('ignores scp_* listed in embed.unsigned_params', function (): void {
     config()->set('scarlett-player.embed.unsigned_params', ['scp_key', 'scp_ref', 'scp_media', 'startTime']);
     $one = partnerRow(['ref' => 'one']);
