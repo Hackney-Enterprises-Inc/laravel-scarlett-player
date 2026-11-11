@@ -3,6 +3,9 @@
 declare(strict_types=1);
 
 use Hei\ScarlettPlayer\Doctor\CheckRegistry;
+use Hei\ScarlettPlayer\Doctor\Checks\BeaconPartnerColumnsCheck;
+use Hei\ScarlettPlayer\Doctor\Checks\PartnerEmbedCheck;
+use Hei\ScarlettPlayer\Doctor\CheckStatus;
 use Hei\ScarlettPlayer\Tests\Fixtures\Models\ScarlettVideo;
 use Hei\ScarlettPlayer\Tests\Fixtures\Provider\PassingCheck;
 use Hei\ScarlettPlayer\Tests\Fixtures\Provider\ThrowingCheck;
@@ -26,6 +29,20 @@ it('succeeds when checks only pass or warn, printing one row each', function ():
         ])
         ->expectsOutputToContain('No check failed.')
         ->assertExitCode(Command::SUCCESS);
+});
+
+it('reports the partner checks and does not fail a host with no partners and no partner table', function (): void {
+    $this->artisan('scarlett:doctor')
+        ->expectsOutputToContain('partner embeds')
+        ->expectsOutputToContain('beacon partner columns')
+        ->run();
+
+    $results = collect(app(CheckRegistry::class)->checks())
+        ->filter(fn ($check): bool => $check instanceof PartnerEmbedCheck || $check instanceof BeaconPartnerColumnsCheck)
+        ->map(fn ($check) => $check->run()->status);
+
+    expect($results)->toHaveCount(2)
+        ->and($results->every(fn ($status): bool => $status !== CheckStatus::Fail))->toBeTrue();
 });
 
 it('reports a check that throws as a failure instead of crashing', function (): void {

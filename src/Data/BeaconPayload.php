@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Hei\ScarlettPlayer\Data;
 
 use Hei\ScarlettPlayer\Exceptions\InvalidBeaconContextException;
+use Hei\ScarlettPlayer\Partners\PartnerBeaconContext;
+use Hei\ScarlettPlayer\Partners\PartnerParams;
 
 /**
  * One analytics beacon, as the player's analytics plugin sends it.
@@ -78,6 +80,20 @@ final readonly class BeaconPayload
      * Never part of the hash basis or the stored payload. Read through receivedAtMs().
      */
     private int $receivedAtMs; // @phpstan-ignore property.uninitializedReadonly
+
+    /**
+     * The partner ref a verified proof on the beacon URL attributes this beacon to
+     * (PartnerBeaconContext). Its own property, never part of $server, so a pipeline
+     * step that replaces the server map keeps it and none can set it: the only way in
+     * is withVerifiedPartner(), which needs a proof only the verifier can build.
+     * Uninitialized on a beacon without a verified proof and on a job queued before
+     * partners existed. Serialized with the payload, never part of the hash basis.
+     * Read through partnerRef().
+     */
+    private string $partnerRef; // @phpstan-ignore property.uninitializedReadonly
+
+    /** The raw log key the verified ref is recorded under (toArray()); reserved on the server context. */
+    public const PARTNER_KEY = 'scarlett_partner';
 
     /**
      * Written by __serialize(). A serialized payload without it, or with an older
@@ -376,8 +392,14 @@ final readonly class BeaconPayload
             // data (index.ts ~210), so a dimension called `duration` or `fatal` on
             // an event that does not set it arrives under a known name. It is kept
             // as a custom dimension rather than refused.
-            $custom[$key] = $value;
             $legacyCustom[$key] = $value;
+
+            // The partner name is reserved on the wire: only a verified proof yields
+            // it, so a browser's flat key is never a custom dimension. It stays in the
+            // hash basis, so the body hash of the received body is unchanged.
+            if ($key !== self::PARTNER_KEY) {
+                $custom[$key] = $value;
+            }
         }
 
         $legacyBody = array_replace([
@@ -440,6 +462,32 @@ final readonly class BeaconPayload
         ))->carryLegacy($this, receivedAt: false);
 
         $copy->receivedAtMs = $milliseconds; // @phpstan-ignore property.readOnlyAssignNotInConstructor
+
+        return $copy;
+    }
+
+    /**
+     * The partner this beacon is attributed to, or null: set only by a verified proof.
+     */
+    public function partnerRef(): ?string
+    {
+        return $this->partnerRef ?? null;
+    }
+
+    /**
+     * The same beacon attributed to a verified partner. The name `scarlett_partner` is
+     * reserved on the wire (never a custom dimension), so only this ref is recorded
+     * under it. The body hash is unchanged.
+     */
+    public function withVerifiedPartner(PartnerBeaconContext $proof): self
+    {
+        $copy = (new self(
+            $this->event, $this->timestamp, $this->viewId, $this->sessionId, $this->viewerId,
+            $this->videoId, $this->context, $this->fields, $this->custom,
+            $this->ip, $this->server, $this->owned, $this->bodyHash,
+        ))->carryLegacy($this);
+
+        $copy->partnerRef = $proof->ref; // @phpstan-ignore property.readOnlyAssignNotInConstructor
 
         return $copy;
     }
@@ -521,7 +569,8 @@ final readonly class BeaconPayload
      */
     public function withCustom(array $custom): self
     {
-        $custom = array_diff_key($custom, array_flip($this->owned));
+        // The partner name is reserved: never a custom dimension, verified or not.
+        $custom = array_diff_key($custom, array_flip($this->owned), [self::PARTNER_KEY => true]);
 
         // A restored value was captured from the custom dimensions, so the map the
         // pipeline hands back decides it: removed or retyped there, it is redacted.
@@ -572,6 +621,10 @@ final readonly class BeaconPayload
                 throw InvalidBeaconContextException::reservedKey($key);
             }
 
+            if ($key === self::PARTNER_KEY) {
+                throw InvalidBeaconContextException::partnerKey();
+            }
+
             unset($custom[$key]);
             $owned[] = $key;
 
@@ -610,7 +663,11 @@ final readonly class BeaconPayload
      */
     public function toArray(): array
     {
-        return array_replace($this->browserArray(), $this->server);
+        return array_replace(
+            $this->browserArray(),
+            $this->server,
+            isset($this->partnerRef) ? [self::PARTNER_KEY => $this->partnerRef] : [],
+        );
     }
 
     /**
@@ -710,7 +767,8 @@ final readonly class BeaconPayload
             videoId: (string) $data['videoId'],
             context: (array) ($data['context'] ?? []),
             fields: (array) ($data['fields'] ?? []),
-            custom: (array) ($data['custom'] ?? []),
+            // A job queued by 0.11.0 before the name was reserved may hold the browser's key.
+            custom: array_diff_key((array) ($data['custom'] ?? []), [self::PARTNER_KEY => true]),
             ip: isset($data['ip']) ? (string) $data['ip'] : null,
             server: $server,
             owned: array_values(array_map('strval', (array) ($data['owned'] ?? array_keys($server)))),
@@ -773,6 +831,11 @@ final readonly class BeaconPayload
             $this->gaugeNulls = array_values(array_unique($gaugeNulls));
         }
 
+        // Written only by a verified proof; anything that is not a ref is dropped.
+        if (isset($data['partnerRef']) && PartnerParams::isRef($data['partnerRef'])) {
+            $this->partnerRef = $data['partnerRef'];
+        }
+
         // A queue written before 0.9.0 has no receipt time and gets none.
         if (isset($data['receivedAtMs']) && is_int($data['receivedAtMs'])) {
             $this->receivedAtMs = $data['receivedAtMs'];
@@ -796,6 +859,10 @@ final readonly class BeaconPayload
 
         if (isset($from->gaugeNulls)) {
             $this->gaugeNulls = $from->gaugeNulls; // @phpstan-ignore property.readOnlyAssignNotInConstructor
+        }
+
+        if (isset($from->partnerRef)) {
+            $this->partnerRef = $from->partnerRef; // @phpstan-ignore property.readOnlyAssignNotInConstructor
         }
 
         if ($receivedAt && isset($from->receivedAtMs)) {

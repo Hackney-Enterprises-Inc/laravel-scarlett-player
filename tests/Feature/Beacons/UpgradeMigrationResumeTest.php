@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Illuminate\Database\Events\QueryExecuted;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
@@ -15,9 +16,13 @@ use Illuminate\Support\Facades\Schema;
 
 const RESUME_SIGNALS = __DIR__.'/../../../database/migrations/0001_01_01_000005_add_signals_to_scarlett_tables.php';
 
+const RESUME_PARTNERS = __DIR__.'/../../../database/migrations/0001_01_01_000011_create_scarlett_partners_table.php';
+
+const RESUME_PARTNER_REF = __DIR__.'/../../../database/migrations/0001_01_01_000012_add_partner_ref_to_scarlett_views_table.php';
+
 function resumeDropTables(): void
 {
-    foreach (['scarlett_clips', 'scarlett_view_errors', 'scarlett_beacon_events', 'scarlett_views'] as $table) {
+    foreach (['scarlett_partners', 'scarlett_clips', 'scarlett_view_errors', 'scarlett_beacon_events', 'scarlett_views'] as $table) {
         Schema::dropIfExists($table);
     }
 }
@@ -42,11 +47,15 @@ function resumeVersion(string $viewId): ?int
     return $value === null ? null : (int) $value;
 }
 
-/** Count write statements and throw right after the given one, as a killed run would stop. */
-function resumeInterruptAfter(int &$writes, int &$failAt): void
+/**
+ * Count write statements and throw right after the given one, as a killed run would stop.
+ * The default counts alter and update; the partner migrations also count create (a table,
+ * or an index on the engines that create indexes with CREATE INDEX).
+ */
+function resumeInterruptAfter(int &$writes, int &$failAt, string $statements = 'alter|update'): void
 {
-    DB::listen(function (QueryExecuted $query) use (&$writes, &$failAt): void {
-        if (preg_match('/^\s*(alter|update)\b/i', $query->sql) !== 1) {
+    DB::listen(function (QueryExecuted $query) use (&$writes, &$failAt, $statements): void {
+        if (preg_match('/^\s*('.$statements.')\b/i', $query->sql) !== 1) {
             return;
         }
         $writes++;
@@ -136,3 +145,86 @@ it('owes the backfill only when qoe_version is the sole signals column present',
     'qoe_version and an interval' => [['qoe_version', 'segment_count'], null],
     'no qoe_version' => [['warning_count'], 1],
 ]);
+
+it('resumes the partners create after an interruption at the CREATE and after each index statement', function (): void {
+    $writes = 0;
+    $failAt = 0;
+    resumeInterruptAfter($writes, $failAt, 'alter|update|create');
+
+    $row = fn (string $ref, string $key): array => [
+        'ref' => $ref, 'key_id' => $key, 'name' => 'Acme', 'origins' => '[]',
+        'created_at' => now(), 'updated_at' => now(),
+    ];
+
+    try {
+        resumeDropTables();
+        (require RESUME_PARTNERS)->up();
+        $total = $writes;
+        // The CREATE and one statement per UNIQUE index.
+        expect($total)->toBeGreaterThanOrEqual(3);
+
+        for ($boundary = 1; $boundary <= $total; $boundary++) {
+            resumeDropTables();
+            $writes = 0;
+            $failAt = $boundary;
+            try {
+                (require RESUME_PARTNERS)->up();
+                $this->fail('the run was not interrupted at write '.$boundary);
+            } catch (RuntimeException $e) {
+                expect($e->getMessage())->toBe('interrupted after write '.$boundary);
+            }
+
+            $failAt = 0;
+            // A row written between the interrupted run and its retry.
+            DB::table('scarlett_partners')->insert($row('acme', str_repeat('a', 32)));
+            (require RESUME_PARTNERS)->up();
+
+            expect(Schema::hasIndex('scarlett_partners', ['ref'], 'unique'))->toBeTrue('ref unique, boundary '.$boundary)
+                ->and(Schema::hasIndex('scarlett_partners', ['key_id'], 'unique'))->toBeTrue('key_id unique, boundary '.$boundary)
+                ->and(DB::table('scarlett_partners')->where('ref', 'acme')->count())->toBe(1);
+
+            expect(fn () => DB::table('scarlett_partners')->insert($row('acme', str_repeat('b', 32))))->toThrow(QueryException::class)
+                ->and(fn () => DB::table('scarlett_partners')->insert($row('other', str_repeat('a', 32))))->toThrow(QueryException::class)
+                ->and(DB::table('scarlett_partners')->count())->toBe(1);
+        }
+    } finally {
+        $failAt = 0;
+        resumeDropTables();
+    }
+});
+
+it('resumes the partner_ref upgrade after an interruption at every alter and index boundary', function (): void {
+    $writes = 0;
+    $failAt = 0;
+    resumeInterruptAfter($writes, $failAt, 'alter|update|create');
+
+    try {
+        resumeLegacySchema();
+        $writes = 0;
+        (require RESUME_PARTNER_REF)->up();
+        $total = $writes;
+        expect($total)->toBeGreaterThanOrEqual(2);
+
+        for ($boundary = 1; $boundary <= $total; $boundary++) {
+            resumeLegacySchema();
+            $writes = 0;
+            $failAt = $boundary;
+            try {
+                (require RESUME_PARTNER_REF)->up();
+                $this->fail('the run was not interrupted at write '.$boundary);
+            } catch (RuntimeException $e) {
+                expect($e->getMessage())->toBe('interrupted after write '.$boundary);
+            }
+
+            $failAt = 0;
+            (require RESUME_PARTNER_REF)->up();
+
+            expect(Schema::hasColumn('scarlett_views', 'partner_ref'))->toBeTrue('column, boundary '.$boundary)
+                ->and(Schema::hasIndex('scarlett_views', ['partner_ref']))->toBeTrue('index, boundary '.$boundary)
+                ->and(DB::table('scarlett_views')->count())->toBe(2);
+        }
+    } finally {
+        $failAt = 0;
+        resumeDropTables();
+    }
+});

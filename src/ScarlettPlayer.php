@@ -9,7 +9,9 @@ use DateTimeInterface;
 use Hei\ScarlettPlayer\Contracts\ResolvesMedia;
 use Hei\ScarlettPlayer\Contracts\ScarlettMedia;
 use Hei\ScarlettPlayer\Data\MediaSource;
+use Hei\ScarlettPlayer\Exceptions\InvalidPartnerException;
 use Hei\ScarlettPlayer\Exceptions\MediaNotFoundException;
+use Hei\ScarlettPlayer\Partners\PartnerEmbedUrls;
 use Hei\ScarlettPlayer\Player\EmbedUrlGenerator;
 use Hei\ScarlettPlayer\Player\PlayerConfigBuilder;
 use Illuminate\Contracts\Config\Repository;
@@ -74,6 +76,43 @@ class ScarlettPlayer
         int|string $height = 360,
     ): string {
         return $this->container->make(EmbedUrlGenerator::class)->embedCode($this->sourceOf($media), $expires, $width, $height);
+    }
+
+    /**
+     * The signed page URL of a partner snippet: /v/{media}?scp_key=...&signature=..., signed
+     * relative and prefixed with $root (else app.url, else this request's root). An integer
+     * $expires is seconds from now, as for embedUrl(); a partner URL has none by default,
+     * and control is the partner row, checked on every page load.
+     *
+     * @throws InvalidPartnerException for an unknown, revoked or expired partner, embed.always_sign
+     *                                 off, a media id the beacon proof cannot carry, protected media
+     *                                 without an expiry, or an expiry past or beyond 90 days.
+     * @throws MediaNotFoundException when the media cannot be resolved.
+     */
+    public function partnerEmbedUrl(
+        string $ref,
+        Model|string|MediaSource $media,
+        DateTimeInterface|DateInterval|int|null $expires = null,
+        ?string $root = null,
+    ): string {
+        return $this->container->make(PartnerEmbedUrls::class)->url($ref, $this->sourceOf($media), $expires, $root);
+    }
+
+    /**
+     * The iframe snippet around partnerEmbedUrl().
+     *
+     * @throws InvalidPartnerException as partnerEmbedUrl().
+     * @throws MediaNotFoundException when the media cannot be resolved.
+     */
+    public function partnerEmbedCode(
+        string $ref,
+        Model|string|MediaSource $media,
+        DateTimeInterface|DateInterval|int|null $expires = null,
+        int|string $width = 640,
+        int|string $height = 360,
+        ?string $root = null,
+    ): string {
+        return $this->container->make(PartnerEmbedUrls::class)->code($ref, $this->sourceOf($media), $expires, $width, $height, $root);
     }
 
     protected function sourceOf(Model|string|MediaSource $media): MediaSource
