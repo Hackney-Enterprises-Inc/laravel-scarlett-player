@@ -50,6 +50,14 @@ class PlayerConfigBuilder implements Arrayable, JsonSerializable
      */
     public const DEFAULT_PLAYER_VERSION = '1.27.1';
 
+    /**
+     * The first player version whose CDN directory holds the analytics, share and
+     * media-session embed addon files (with playlist and watermark, which this package
+     * never loads). Before it only the chapters and clips addons exist as files: the
+     * others live inside the bundle, and asking for their files would 404.
+     */
+    public const SPLIT_ADDONS_SINCE = '1.28.0';
+
     /** The player CDN layout: versioned directories, the ES module build. */
     public const DEFAULT_EMBED_BUNDLE = '{cdn_url}/v{player_version}/embed.js';
 
@@ -75,6 +83,9 @@ class PlayerConfigBuilder implements Arrayable, JsonSerializable
 
     /** @var array<string, mixed>|null */
     protected ?array $analytics = null;
+
+    /** A beacon URL set by analyticsBeaconUrl(), replacing the unsigned route URL. */
+    protected ?string $analyticsBeaconUrl = null;
 
     /** Seconds, set by heartbeatInterval(); null reads player.heartbeat_interval. */
     protected ?float $heartbeatInterval = null;
@@ -226,13 +237,34 @@ class PlayerConfigBuilder implements Arrayable, JsonSerializable
 
         $key = $this->config->get('scarlett-player.beacons.key');
 
+        // Resolved even when a URL was given, so a missing beacon route fails the same
+        // way for every caller.
+        $routeUrl = $this->routeUrl('scarlett.beacons.store', 'analytics', 'routes.beacons');
+
         $this->analytics = [
-            'beaconUrl' => $this->routeUrl('scarlett.beacons.store', 'analytics', 'routes.beacons'),
+            'beaconUrl' => $this->analyticsBeaconUrl ?? $routeUrl,
             'videoId' => $this->media->id,
             'apiKey' => is_string($key) && $key !== '' ? $key : null,
             'videoTitle' => $this->title,
             'isLive' => $this->media->isLive,
         ];
+
+        return $this;
+    }
+
+    /**
+     * Use this URL as the analytics beacon URL instead of the plain route URL: the page
+     * hands the player a signed one (a partner proof). Works before or after
+     * withAnalytics(); the URL is printed as given, so the caller builds it from the URL
+     * generator and signs it.
+     */
+    public function analyticsBeaconUrl(string $url): static
+    {
+        $this->analyticsBeaconUrl = $url;
+
+        if ($this->analytics !== null) {
+            $this->analytics['beaconUrl'] = $url;
+        }
 
         return $this;
     }
@@ -590,10 +622,17 @@ class PlayerConfigBuilder implements Arrayable, JsonSerializable
 
     /**
      * The embed addon files this config needs, in the order they load after the bundle:
-     * chapters, then clips. Each sits beside the bundle, in the same version directory,
-     * in the same build flavour (embed.addon.<name>.js beside an ES module bundle,
+     * chapters, clips, then (only on a pin that hasSplitAddons()) analytics, share and
+     * media-session. Each sits beside the bundle, in the same version directory, in the
+     * same build flavour (embed.addon.<name>.js beside an ES module bundle,
      * embed.addon.<name>.umd.cjs beside the UMD build), because an addon refuses an
      * embed of another version. Empty in module mode.
+     *
+     * Chapters and clips load whenever they are set, whatever the pin. The other three
+     * load for what the config carries: analytics with a beacon URL, share with a share
+     * URL and controls on, media-session with a title (see hasMediaSessionTitle()). The
+     * Audio build (embed.audio*) gets neither share (it has no video share UI) nor
+     * media-session (the player refuses it beside the bundled one); analytics stays.
      *
      * @return list<string>
      *
@@ -605,7 +644,16 @@ class PlayerConfigBuilder implements Arrayable, JsonSerializable
             return [];
         }
 
-        $names = array_keys(array_filter(['chapters' => $this->chapters, 'clips' => $this->clips], fn (?array $feature): bool => $feature !== null));
+        $split = self::hasSplitAddons($this->playerVersion());
+        $audio = str_starts_with(strtolower($this->embedBundleFile()), 'embed.audio');
+
+        $names = array_keys(array_filter([
+            'chapters' => $this->chapters !== null,
+            'clips' => $this->clips !== null,
+            'analytics' => $split && is_string($this->analytics['beaconUrl'] ?? null) && $this->analytics['beaconUrl'] !== '',
+            'share' => $split && ! $audio && $this->controls && is_string($this->share['url'] ?? null) && $this->share['url'] !== '',
+            'media-session' => $split && ! $audio && $this->hasMediaSessionTitle(),
+        ]));
 
         if ($names === []) {
             return [];
@@ -616,6 +664,49 @@ class PlayerConfigBuilder implements Arrayable, JsonSerializable
         $extension = $this->embedBundleIsModule() ? '.js' : '.umd.cjs';
 
         return array_map(fn (string $name): string => "{$directory}embed.addon.{$name}{$extension}", $names);
+    }
+
+    /**
+     * Whether this player version ships the analytics, share and media-session embed
+     * addon files (SPLIT_ADDONS_SINCE onwards). The version must be plain
+     * major.minor.patch digits and is compared as three numbers, so 1.100.0 is above
+     * 1.28.0. Anything else (latest, dev, an empty pin, a v prefix, a pre-release or
+     * build suffix, two or four parts) answers false: the package cannot know what that
+     * directory holds, and a request for a missing addon file is a 404 on every load.
+     */
+    public static function hasSplitAddons(string $playerVersion): bool
+    {
+        $parts = self::versionParts($playerVersion);
+        $since = self::versionParts(self::SPLIT_ADDONS_SINCE);
+
+        return $parts !== null && $since !== null && $parts >= $since;
+    }
+
+    /**
+     * Whether the page carries a title for the media session: the same value
+     * toDataAttributes() writes as data-title (the title() override, else the
+     * MediaSource title), when it is not empty. The builder emits no data-type, so every
+     * player it renders is the embed's default video type, which uses the media session
+     * for a titled source. The Audio build is excluded by embedAddonUrls(), not here.
+     */
+    protected function hasMediaSessionTitle(): bool
+    {
+        return $this->title !== null && $this->title !== '';
+    }
+
+    /**
+     * A plain major.minor.patch version as three integers, or null when it is anything else.
+     *
+     * @return array{int, int, int}|null
+     */
+    private static function versionParts(string $version): ?array
+    {
+        // Each part is 0 or digits with no leading zero, so 01.28.0 is not 1.28.0.
+        if (preg_match('/\A(0|[1-9]\d{0,8})\.(0|[1-9]\d{0,8})\.(0|[1-9]\d{0,8})\z/', $version, $match) !== 1) {
+            return null;
+        }
+
+        return [(int) $match[1], (int) $match[2], (int) $match[3]];
     }
 
     /**

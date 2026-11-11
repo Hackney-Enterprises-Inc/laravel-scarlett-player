@@ -28,7 +28,7 @@ pest()->extends(TestCase::class)->group('feature')->in('Feature');
  * beacon store's merge SQL is dialect-specific, and the matrix runs sqlite only. A
  * group rather than paths because `--parallel` takes one path at most.
  */
-pest()->group('database')->in('Feature/Beacons', 'Feature/Media/HasScarlettClipsTest.php');
+pest()->group('database')->in('Feature/Beacons', 'Feature/Partners', 'Feature/Media/HasScarlettClipsTest.php');
 
 pest()->extends(TestCase::class)->group('browser')
     ->beforeEach(function (): void {

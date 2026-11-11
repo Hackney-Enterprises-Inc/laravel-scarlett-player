@@ -7,6 +7,9 @@ namespace Hei\ScarlettPlayer\Http\Middleware;
 use Closure;
 use Hei\ScarlettPlayer\Data\MediaSource;
 use Hei\ScarlettPlayer\Exceptions\MediaNotFoundException;
+use Hei\ScarlettPlayer\Partners\PartnerContext;
+use Hei\ScarlettPlayer\Partners\PartnerGate;
+use Hei\ScarlettPlayer\Partners\PartnerParams;
 use Hei\ScarlettPlayer\Player\EmbedConfig;
 use Hei\ScarlettPlayer\Player\EmbedUrlGenerator;
 use Hei\ScarlettPlayer\ScarlettPlayer;
@@ -37,6 +40,7 @@ class ValidateEmbedSignature extends ValidateSignature
         private readonly ScarlettPlayer $scarlett,
         private readonly EmbedUrlGenerator $embeds,
         private readonly EmbedConfig $embedConfig,
+        private readonly PartnerGate $partners,
     ) {}
 
     /**
@@ -47,6 +51,13 @@ class ValidateEmbedSignature extends ValidateSignature
      */
     public function handle($request, Closure $next, ...$args)
     {
+        // A partner URL is signed relative and answers to the partner gate alone: neither
+        // the absolute check nor mustSign() below may run for it, or every partner page
+        // would 403, and a valid absolute signature must never satisfy it.
+        if ($request->query->has(PartnerParams::KEY)) {
+            return $this->handlePartner($request, $next);
+        }
+
         $ignore = $this->embedConfig->unsignedParams();
         $signed = $request->query->has('signature');
 
@@ -62,6 +73,23 @@ class ValidateEmbedSignature extends ValidateSignature
 
         $this->sanitisePresentation($request);
         $request->attributes->set(self::MEDIA_ATTRIBUTE, $media);
+
+        return $next($request);
+    }
+
+    /**
+     * @param  Closure(Request): Response  $next
+     */
+    private function handlePartner(Request $request, Closure $next): Response
+    {
+        $partner = $this->partners->partner($request);
+        $media = $this->resolve($request);
+
+        $this->partners->assertExpiry($request, $media);
+        $this->sanitisePresentation($request);
+
+        $request->attributes->set(self::MEDIA_ATTRIBUTE, $media);
+        $request->attributes->set(PartnerContext::ATTRIBUTE, $this->partners->context($partner));
 
         return $next($request);
     }

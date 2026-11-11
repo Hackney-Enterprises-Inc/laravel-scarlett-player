@@ -231,6 +231,48 @@ it('loads the UMD addons as classic scripts beside a UMD bundle', function (): v
         ->and($html)->not->toContain('type="module"');
 });
 
+it('loads the analytics, share and media-session addons after the bundle on a 1.28.0 pin, once each, with the nonce', function (): void {
+    config()->set('scarlett-player.player.player_version', '1.28.0');
+
+    $player = '<x-scarlett-player media="video-1" mode="embed" analytics title="Main event" share-url="https://host.test/watch/1" :chapters="$chapters" nonce="n1" />';
+    $html = (string) $this->blade($player.$player, ['chapters' => [['time' => 0, 'label' => 'Intro']]]);
+    $base = 'https://cdn.example.test/scarlett-player/v1.28.0';
+
+    preg_match_all('#<script src="([^"]+)"#', $html, $scripts);
+
+    expect($scripts[1])->toBe([
+        "{$base}/embed.js",
+        "{$base}/embed.addon.chapters.js",
+        "{$base}/embed.addon.analytics.js",
+        "{$base}/embed.addon.share.js",
+        "{$base}/embed.addon.media-session.js",
+    ])
+        ->and($html)->toContain('<script src="'.$base.'/embed.addon.analytics.js" type="module" nonce="n1"></script>');
+});
+
+it('loads the 1.28.0 addons as classic scripts beside a UMD bundle', function (): void {
+    config()->set('scarlett-player.player.player_version', '1.28.0');
+    config()->set('scarlett-player.player.embed_bundle', '{cdn_url}/v{player_version}/embed.umd.cjs');
+
+    $html = (string) $this->blade('<x-scarlett-player media="video-1" mode="embed" analytics />');
+
+    expect($html)->toContain('<script src="https://cdn.example.test/scarlett-player/v1.28.0/embed.addon.analytics.umd.cjs"></script>')
+        ->and($html)->not->toContain('type="module"');
+});
+
+it('loads no analytics, share or media-session addon on a pin below 1.28.0 or one that is not a version', function (string $pin): void {
+    config()->set('scarlett-player.player.player_version', $pin);
+
+    $html = (string) $this->blade('<x-scarlett-player media="video-1" mode="embed" analytics title="Main event" share-url="https://host.test/watch/1" />');
+
+    preg_match_all('#<script src="([^"]+)"#', $html, $scripts);
+
+    expect($scripts[1])->toBe(["https://cdn.example.test/scarlett-player/v{$pin}/embed.js"])
+        ->and($html)->toContain('data-analytics-video-id="video-1"')
+        ->and($html)->toContain('data-share-url="https://host.test/watch/1"')
+        ->and($html)->toContain('data-title="Main event"');
+})->with(['1.27.1', 'latest', 'dev', 'not-a-version']);
+
 it('forwards privacy flags through module and embed Blade components with explicit false overrides', function (string $mode): void {
     config()->set('scarlett-player.player.player_version', '1.20.0');
     config()->set('scarlett-player.player.analytics_anonymous', true);

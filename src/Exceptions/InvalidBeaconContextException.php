@@ -20,6 +20,11 @@ class InvalidBeaconContextException extends ScarlettPlayerException
         return new self("Beacon server context cannot set [{$key}]: event, timestamp and the four ids identify the beacon and are never server-owned.");
     }
 
+    public static function partnerKey(): self
+    {
+        return new self('Beacon server context cannot set [scarlett_partner]: the package owns it and sets it only from a verified partner proof on the beacon URL.');
+    }
+
     public static function invalidKey(string $key): self
     {
         return new self("Beacon server context key [{$key}] is not a usable name: keys must be non-empty strings.");
