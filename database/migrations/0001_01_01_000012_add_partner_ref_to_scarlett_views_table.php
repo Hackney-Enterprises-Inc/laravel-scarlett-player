@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Hei\ScarlettPlayer\Exceptions\PartnerRefIndexException;
 use Hei\ScarlettPlayer\Exceptions\UpgradeMigrationOrderException;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
@@ -17,11 +18,15 @@ use Illuminate\Support\Facades\Schema;
  * backfilled.
  *
  * Idempotent: a column or index that already exists is left alone, so a second
- * published copy or a host that added them itself migrates as a no-op. The index
- * predicate is the same both ways: any index covering exactly partner_ref counts,
- * whatever its name, and down() drops those by what it finds, never by an assumed
- * name. Only the last recorded copy rolls back, and rolling back never touches
- * scarlett_partners.
+ * published copy or a host that added them itself migrates as a no-op. up() adds the
+ * ordinary index only when no index covering exactly partner_ref exists, whatever its
+ * name. A unique index on exactly partner_ref (standalone or a UNIQUE constraint) is
+ * refused, not repaired: one partner has many views, so up() throws
+ * PartnerRefIndexException before changing anything and the host drops that index and
+ * reruns. A composite unique index that merely includes partner_ref is not refused.
+ * down() drops every index covering exactly partner_ref by what it finds, never by an
+ * assumed name, a constraint-backed one through the unique-drop operation. Only the last
+ * recorded copy rolls back, and rolling back never touches scarlett_partners.
  */
 return new class extends Migration
 {
@@ -45,8 +50,17 @@ return new class extends Migration
             Schema::table(self::TABLE, function (Blueprint $blueprint): void {
                 $blueprint->string(self::COLUMN, 64)->nullable();
             });
+        } else {
+            // Before any change: a unique index would refuse a partner's second view, and
+            // the package never drops a host's constraint. Without the column there is none.
+            foreach ($this->indexes() as $index) {
+                if ($index['unique']) {
+                    throw PartnerRefIndexException::uniqueIndex(basename(__FILE__), self::TABLE, self::COLUMN, $index['name']);
+                }
+            }
         }
 
+        // Any index covering exactly partner_ref counts, whatever its name.
         if ($this->indexes() === []) {
             Schema::table(self::TABLE, function (Blueprint $blueprint): void {
                 $blueprint->index(self::COLUMN, self::INDEX);
