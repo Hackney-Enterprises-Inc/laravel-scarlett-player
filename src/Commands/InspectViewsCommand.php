@@ -202,6 +202,7 @@ class InspectViewsCommand extends Command
         $fields = [
             'video' => $view->video_id,
             'viewer ref' => $view->viewer_ref ?? null,
+            'partner ref' => $view->partner_ref ?? null,
             'viewer id' => $view->viewer_id,
             'session id' => $view->session_id,
             'player' => trim(($view->player_name ?? '').' '.($view->player_version ?? '')),

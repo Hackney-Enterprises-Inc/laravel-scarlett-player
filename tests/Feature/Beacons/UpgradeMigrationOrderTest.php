@@ -381,7 +381,7 @@ it('publishes all seven for a fresh install and adds only no-op copies when an u
 it('publishes every migration tag in one command in a migratable order', function (): void {
     // The same path set `--provider` publishes for migrations.
     Date::setTestNow('2026-10-07 12:00:00');
-    $this->artisan('vendor:publish', ['--tag' => ['scarlett-migrations', 'scarlett-migrations-signals', 'scarlett-migrations-reconnects', 'scarlett-migrations-gauges', 'scarlett-migrations-diagnostics', 'scarlett-migrations-clock', 'scarlett-migrations-startstate']])->assertSuccessful();
+    $this->artisan('vendor:publish', ['--tag' => ['scarlett-migrations', 'scarlett-migrations-signals', 'scarlett-migrations-reconnects', 'scarlett-migrations-gauges', 'scarlett-migrations-diagnostics', 'scarlett-migrations-clock', 'scarlett-migrations-startstate', 'scarlett-migrations-partners', 'scarlett-migrations-partner-ref']])->assertSuccessful();
     expect(array_values(array_filter(upgradeFiles($this->destination), fn (string $file): bool => str_contains($file, '_scarlett_'))))->toBe([
         '2026_10_07_120001_create_scarlett_views_table.php',
         '2026_10_07_120002_create_scarlett_beacon_events_table.php',
@@ -393,17 +393,42 @@ it('publishes every migration tag in one command in a migratable order', functio
         '2026_10_07_120008_add_diagnostics_to_scarlett_tables.php',
         '2026_10_07_120009_add_clock_correction_to_scarlett_tables.php',
         '2026_10_07_120010_add_start_state_and_stalled_to_scarlett_tables.php',
-        '2026_10_07_120011_add_signals_to_scarlett_tables.php',
-        '2026_10_07_120012_add_reconnects_to_scarlett_tables.php',
-        '2026_10_07_120013_add_gauges_to_scarlett_tables.php',
-        '2026_10_07_120014_add_diagnostics_to_scarlett_tables.php',
-        '2026_10_07_120015_add_clock_correction_to_scarlett_tables.php',
-        '2026_10_07_120016_add_start_state_and_stalled_to_scarlett_tables.php',
+        '2026_10_07_120011_create_scarlett_partners_table.php',
+        '2026_10_07_120012_add_partner_ref_to_scarlett_views_table.php',
+        '2026_10_07_120013_add_signals_to_scarlett_tables.php',
+        '2026_10_07_120014_add_reconnects_to_scarlett_tables.php',
+        '2026_10_07_120015_add_gauges_to_scarlett_tables.php',
+        '2026_10_07_120016_add_diagnostics_to_scarlett_tables.php',
+        '2026_10_07_120017_add_clock_correction_to_scarlett_tables.php',
+        '2026_10_07_120018_add_start_state_and_stalled_to_scarlett_tables.php',
+        '2026_10_07_120019_create_scarlett_partners_table.php',
+        '2026_10_07_120020_add_partner_ref_to_scarlett_views_table.php',
     ]);
     $this->artisan('migrate', $this->migrateOptions)->assertSuccessful();
     expect(upgradeColumnsPresent())->toBeTrue()
         ->and(Schema::hasColumns('scarlett_views', ['decoded_frames_total', 'dropped_frames_total', 'viewer_ref']))->toBeTrue()
-        ->and(Schema::hasIndex('scarlett_views', ['viewer_ref']))->toBeTrue();
+        ->and(Schema::hasIndex('scarlett_views', ['viewer_ref']))->toBeTrue()
+        ->and(Schema::hasTable('scarlett_partners'))->toBeTrue()
+        ->and(Schema::hasColumn('scarlett_views', 'partner_ref'))->toBeTrue()
+        ->and(upgradeOrderCheck()->status)->toBe(CheckStatus::Pass);
+});
+
+it('publishes the partner tags after a fresh install in order and keeps the order check green', function (): void {
+    Date::setTestNow('2026-10-07 12:00:00');
+    $this->artisan('vendor:publish', ['--tag' => 'scarlett-migrations'])->assertSuccessful();
+    $this->artisan('migrate', $this->migrateOptions)->assertSuccessful();
+
+    Date::setTestNow('2026-10-08 12:00:00');
+    $this->artisan('vendor:publish', ['--tag' => 'scarlett-migrations-partners'])->assertSuccessful();
+    $this->artisan('vendor:publish', ['--tag' => 'scarlett-migrations-partner-ref'])->assertSuccessful();
+    expect(array_slice(upgradeFiles($this->destination), -2))->toBe([
+        '2026_10_08_120001_add_partner_ref_to_scarlett_views_table.php',
+        '2026_10_08_120001_create_scarlett_partners_table.php',
+    ]);
+    expect(upgradeOrderCheck()->status)->toBe(CheckStatus::Pass);
+    $this->artisan('migrate', $this->migrateOptions)->assertSuccessful();
+    expect(Schema::hasTable('scarlett_partners'))->toBeTrue()
+        ->and(Schema::hasColumn('scarlett_views', 'partner_ref'))->toBeTrue();
 });
 
 it('does not warn when the create migrations carry fixed names too, or no migrations directory exists', function (): void {
@@ -458,6 +483,7 @@ it('fails with a named explanation when a same-second upgrade publish sorts befo
     'signals' => ['scarlett-migrations-signals', 'add_signals_to_scarlett_tables'],
     'reconnects' => ['scarlett-migrations-reconnects', 'add_reconnects_to_scarlett_tables'],
     'gauges' => ['scarlett-migrations-gauges', 'add_gauges_to_scarlett_tables'],
+    'partner-ref' => ['scarlett-migrations-partner-ref', 'add_partner_ref_to_scarlett_views_table'],
 ]);
 
 it('checks every table before altering one when an upgrade sorts between the create migrations', function (): void {

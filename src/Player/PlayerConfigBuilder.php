@@ -76,6 +76,9 @@ class PlayerConfigBuilder implements Arrayable, JsonSerializable
     /** @var array<string, mixed>|null */
     protected ?array $analytics = null;
 
+    /** A beacon URL set by analyticsBeaconUrl(), replacing the unsigned route URL. */
+    protected ?string $analyticsBeaconUrl = null;
+
     /** Seconds, set by heartbeatInterval(); null reads player.heartbeat_interval. */
     protected ?float $heartbeatInterval = null;
 
@@ -226,13 +229,34 @@ class PlayerConfigBuilder implements Arrayable, JsonSerializable
 
         $key = $this->config->get('scarlett-player.beacons.key');
 
+        // Resolved even when a URL was given, so a missing beacon route fails the same
+        // way for every caller.
+        $routeUrl = $this->routeUrl('scarlett.beacons.store', 'analytics', 'routes.beacons');
+
         $this->analytics = [
-            'beaconUrl' => $this->routeUrl('scarlett.beacons.store', 'analytics', 'routes.beacons'),
+            'beaconUrl' => $this->analyticsBeaconUrl ?? $routeUrl,
             'videoId' => $this->media->id,
             'apiKey' => is_string($key) && $key !== '' ? $key : null,
             'videoTitle' => $this->title,
             'isLive' => $this->media->isLive,
         ];
+
+        return $this;
+    }
+
+    /**
+     * Use this URL as the analytics beacon URL instead of the plain route URL: the page
+     * hands the player a signed one (a partner proof). Works before or after
+     * withAnalytics(); the URL is printed as given, so the caller builds it from the URL
+     * generator and signs it.
+     */
+    public function analyticsBeaconUrl(string $url): static
+    {
+        $this->analyticsBeaconUrl = $url;
+
+        if ($this->analytics !== null) {
+            $this->analytics['beaconUrl'] = $url;
+        }
 
         return $this;
     }

@@ -11,6 +11,12 @@ use Hei\ScarlettPlayer\Commands\BackfillGaugesCommand;
 use Hei\ScarlettPlayer\Commands\BeaconTestCommand;
 use Hei\ScarlettPlayer\Commands\DoctorCommand;
 use Hei\ScarlettPlayer\Commands\InspectViewsCommand;
+use Hei\ScarlettPlayer\Commands\Partners\CreateCommand;
+use Hei\ScarlettPlayer\Commands\Partners\ListCommand;
+use Hei\ScarlettPlayer\Commands\Partners\RevokeCommand;
+use Hei\ScarlettPlayer\Commands\Partners\RotateCommand;
+use Hei\ScarlettPlayer\Commands\Partners\SnippetCommand;
+use Hei\ScarlettPlayer\Commands\Partners\UpdateCommand;
 use Hei\ScarlettPlayer\Commands\PruneViewsCommand;
 use Hei\ScarlettPlayer\Commands\ReconcileClipsCommand;
 use Hei\ScarlettPlayer\Contracts\BeaconStore;
@@ -22,6 +28,7 @@ use Hei\ScarlettPlayer\Doctor\CheckRegistry;
 use Hei\ScarlettPlayer\Doctor\Checks\BeaconContextCheck;
 use Hei\ScarlettPlayer\Doctor\Checks\BeaconIpColumnCheck;
 use Hei\ScarlettPlayer\Doctor\Checks\BeaconKeyCheck;
+use Hei\ScarlettPlayer\Doctor\Checks\BeaconPartnerColumnsCheck;
 use Hei\ScarlettPlayer\Doctor\Checks\BeaconQueueCheck;
 use Hei\ScarlettPlayer\Doctor\Checks\BeaconRouteCheck;
 use Hei\ScarlettPlayer\Doctor\Checks\BeaconStoreCheck;
@@ -32,6 +39,7 @@ use Hei\ScarlettPlayer\Doctor\Checks\EmbedBundleCheck;
 use Hei\ScarlettPlayer\Doctor\Checks\EmbedDomainsCheck;
 use Hei\ScarlettPlayer\Doctor\Checks\FfmpegCheck;
 use Hei\ScarlettPlayer\Doctor\Checks\MediaMappingCheck;
+use Hei\ScarlettPlayer\Doctor\Checks\PartnerEmbedCheck;
 use Hei\ScarlettPlayer\Doctor\Checks\QueueConnectionCheck;
 use Hei\ScarlettPlayer\Doctor\Checks\QueueTimeoutCheck;
 use Hei\ScarlettPlayer\Exceptions\InvalidBeaconStoreException;
@@ -138,6 +146,7 @@ class ScarlettPlayerServiceProvider extends ServiceProvider
         $this->bootBeacons();
         $this->bootClips();
         $this->bootPlayer();
+        $this->bootPartners();
     }
 
     /**
@@ -153,6 +162,7 @@ class ScarlettPlayerServiceProvider extends ServiceProvider
             ...$this->beaconsDoctorChecks(),
             ...$this->clipsDoctorChecks(),
             ...$this->playerDoctorChecks(),
+            ...$this->partnersDoctorChecks(),
         ];
     }
 
@@ -437,6 +447,52 @@ class ScarlettPlayerServiceProvider extends ServiceProvider
     private function playerSchedule(): array
     {
         return [];
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Partners
+    |--------------------------------------------------------------------------
+    */
+
+    // The partners module.
+    private function bootPartners(): void
+    {
+        // Existing hosts publish one or both of these instead of the whole folder; a
+        // fresh install gets both from scarlett-migrations. The create has no
+        // dependency on scarlett_views, so only the partner_ref upgrade enters the
+        // beacon order check.
+        $this->publishesMigrations([
+            __DIR__.'/../database/migrations/0001_01_01_000011_create_scarlett_partners_table.php' => database_path('migrations/0001_01_01_000011_create_scarlett_partners_table.php'),
+        ], 'scarlett-migrations-partners');
+
+        $this->publishesMigrations([
+            __DIR__.'/../database/migrations/0001_01_01_000012_add_partner_ref_to_scarlett_views_table.php' => database_path('migrations/0001_01_01_000012_add_partner_ref_to_scarlett_views_table.php'),
+        ], 'scarlett-migrations-partner-ref');
+
+        if ($this->app->runningInConsole()) {
+            $this->commands([
+                CreateCommand::class,
+                UpdateCommand::class,
+                SnippetCommand::class,
+                ListCommand::class,
+                RevokeCommand::class,
+                RotateCommand::class,
+            ]);
+        }
+    }
+
+    /**
+     * The partners module.
+     *
+     * @return list<class-string<Check>>
+     */
+    private function partnersDoctorChecks(): array
+    {
+        return [
+            PartnerEmbedCheck::class,
+            BeaconPartnerColumnsCheck::class,
+        ];
     }
 
     /*

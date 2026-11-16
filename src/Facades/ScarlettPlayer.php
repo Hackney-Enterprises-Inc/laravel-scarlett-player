@@ -12,6 +12,8 @@ use Illuminate\Support\Facades\Facade;
  * @method static \Hei\ScarlettPlayer\Player\PlayerConfigBuilder for(\Illuminate\Database\Eloquent\Model|string|\Hei\ScarlettPlayer\Data\MediaSource $media)
  * @method static string embedUrl(\Illuminate\Database\Eloquent\Model|string|\Hei\ScarlettPlayer\Data\MediaSource $media, \DateTimeInterface|\DateInterval|int|null $expires = null)
  * @method static string embedCode(\Illuminate\Database\Eloquent\Model|string|\Hei\ScarlettPlayer\Data\MediaSource $media, \DateTimeInterface|\DateInterval|int|null $expires = null, int|string $width = 640, int|string $height = 360)
+ * @method static string partnerEmbedUrl(string $ref, \Illuminate\Database\Eloquent\Model|string|\Hei\ScarlettPlayer\Data\MediaSource $media, \DateTimeInterface|\DateInterval|int|null $expires = null, ?string $root = null)
+ * @method static string partnerEmbedCode(string $ref, \Illuminate\Database\Eloquent\Model|string|\Hei\ScarlettPlayer\Data\MediaSource $media, \DateTimeInterface|\DateInterval|int|null $expires = null, int|string $width = 640, int|string $height = 360, ?string $root = null)
  * @method static \Hei\ScarlettPlayer\Data\MediaSource resolve(string $mediaId)
  *
  * @see ScarlettPlayerRoot

@@ -38,6 +38,30 @@ it('never treats expires or signature as unsigned', function (): void {
     expect(app(EmbedConfig::class)->unsignedParams())->toBe(['startTime', 'shareUrl']);
 });
 
+it('never lets a partner parameter into unsigned_params', function (): void {
+    config()->set('scarlett-player.embed.unsigned_params', ['startTime', 'scp_key', 'scp_ref', 'scp_media', 'shareUrl']);
+
+    expect(app(EmbedConfig::class)->unsignedParams())->toBe(['startTime', 'shareUrl']);
+});
+
+it('exposes the shared host charset as a public static check', function (string $host, bool $valid): void {
+    expect(EmbedConfig::isHost($host))->toBe($valid);
+})->with([
+    'host' => ['partner.example', true],
+    'single label' => ['localhost', true],
+    'ip' => ['127.0.0.1', true],
+    'hyphen inside' => ['a-b.example', true],
+    'uppercase' => ['Partner.example', false],
+    'underscore' => ['a_b.example', false],
+    'leading hyphen' => ['-a.example', false],
+    'trailing dot' => ['a.example.', false],
+    'wildcard' => ['*.example', false],
+    'port' => ['a.example:80', false],
+    'empty' => ['', false],
+    'trailing newline' => ["a.example\n", false],
+    'too long' => [str_repeat('a.', 127).'a', false],
+]);
+
 it('reads signed_ttl as positive seconds or null', function (mixed $value, ?int $expected): void {
     config()->set('scarlett-player.embed.signed_ttl', $value);
 

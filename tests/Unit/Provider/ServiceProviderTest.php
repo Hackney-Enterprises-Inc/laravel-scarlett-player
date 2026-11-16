@@ -2,13 +2,22 @@
 
 declare(strict_types=1);
 
+use Hei\ScarlettPlayer\Commands\Partners\CreateCommand;
+use Hei\ScarlettPlayer\Commands\Partners\ListCommand;
+use Hei\ScarlettPlayer\Commands\Partners\RevokeCommand;
+use Hei\ScarlettPlayer\Commands\Partners\RotateCommand;
+use Hei\ScarlettPlayer\Commands\Partners\SnippetCommand;
+use Hei\ScarlettPlayer\Commands\Partners\UpdateCommand;
 use Hei\ScarlettPlayer\Contracts\BeaconStore;
 use Hei\ScarlettPlayer\Contracts\ResolvesMedia;
 use Hei\ScarlettPlayer\Doctor\CheckRegistry;
 use Hei\ScarlettPlayer\Doctor\Checks\BeaconKeyCheck;
+use Hei\ScarlettPlayer\Doctor\Checks\BeaconPartnerColumnsCheck;
 use Hei\ScarlettPlayer\Doctor\Checks\BeaconStoreCheck;
 use Hei\ScarlettPlayer\Doctor\Checks\EmbedBundleCheck;
+use Hei\ScarlettPlayer\Doctor\Checks\EmbedDomainsCheck;
 use Hei\ScarlettPlayer\Doctor\Checks\MediaMappingCheck;
+use Hei\ScarlettPlayer\Doctor\Checks\PartnerEmbedCheck;
 use Hei\ScarlettPlayer\Doctor\Checks\QueueConnectionCheck;
 use Hei\ScarlettPlayer\Generators\ClipGeneratorManager;
 use Hei\ScarlettPlayer\Media\ConfigModelResolver;
@@ -19,6 +28,7 @@ use Hei\ScarlettPlayer\Tests\Fixtures\Provider\ArrayResolver;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\View\Compilers\BladeCompiler;
@@ -128,6 +138,44 @@ it('reads a throttle with no minutes as per minute', function (): void {
     expect(RateLimiter::limiter('scarlett-beacons')(Request::create('/'))->decaySeconds)->toBe(60)
         ->and(RateLimiter::limiter('scarlett-beacons')(Request::create('/'))->maxAttempts)->toBe(30)
         ->and(RateLimiter::limiter('scarlett-clips')(Request::create('/'))->decaySeconds)->toBe(600);
+});
+
+it('puts the partner checks in the doctor registry after the player module checks', function (): void {
+    $classes = app(CheckRegistry::class)->classes();
+
+    expect($classes)->toContain(PartnerEmbedCheck::class, BeaconPartnerColumnsCheck::class)
+        ->and(count($classes))->toBe(count(array_unique($classes)))
+        ->and(array_search(PartnerEmbedCheck::class, $classes, true))->toBeGreaterThan(array_search(EmbedDomainsCheck::class, $classes, true));
+});
+
+it('registers the six partner commands with Artisan', function (string $command, string $class): void {
+    expect(Artisan::all())->toHaveKey($command)
+        ->and(Artisan::all()[$command])->toBeInstanceOf($class);
+})->with([
+    ['scarlett:partners:create', CreateCommand::class],
+    ['scarlett:partners:update', UpdateCommand::class],
+    ['scarlett:partners:snippet', SnippetCommand::class],
+    ['scarlett:partners:list', ListCommand::class],
+    ['scarlett:partners:revoke', RevokeCommand::class],
+    ['scarlett:partners:rotate', RotateCommand::class],
+]);
+
+it('publishes each partner migration under its own tag', function (string $tag, string $file): void {
+    $paths = ServiceProvider::pathsToPublish(ScarlettPlayerServiceProvider::class, $tag);
+
+    expect(array_map('basename', array_keys($paths)))->toBe([$file])
+        ->and(array_map('basename', array_values($paths)))->toBe([$file])
+        ->and(file_exists(__DIR__.'/../../../database/migrations/'.$file))->toBeTrue();
+})->with([
+    ['scarlett-migrations-partners', '0001_01_01_000011_create_scarlett_partners_table.php'],
+    ['scarlett-migrations-partner-ref', '0001_01_01_000012_add_partner_ref_to_scarlett_views_table.php'],
+]);
+
+it('keeps both partner migrations in the full migrations folder', function (): void {
+    $files = array_map('basename', glob(__DIR__.'/../../../database/migrations/*.php'));
+
+    expect($files)->toContain('0001_01_01_000011_create_scarlett_partners_table.php', '0001_01_01_000012_add_partner_ref_to_scarlett_views_table.php')
+        ->and($files)->toHaveCount(12);
 });
 
 it('fills the doctor registry with the shared checks first, then each module\'s', function (): void {

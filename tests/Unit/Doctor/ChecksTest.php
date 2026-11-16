@@ -5,8 +5,10 @@ declare(strict_types=1);
 use Hei\ScarlettPlayer\Contracts\BeaconStore;
 use Hei\ScarlettPlayer\Doctor\CheckResult;
 use Hei\ScarlettPlayer\Doctor\Checks\BeaconKeyCheck;
+use Hei\ScarlettPlayer\Doctor\Checks\BeaconPartnerColumnsCheck;
 use Hei\ScarlettPlayer\Doctor\Checks\BeaconStoreCheck;
 use Hei\ScarlettPlayer\Doctor\Checks\MediaMappingCheck;
+use Hei\ScarlettPlayer\Doctor\Checks\PartnerEmbedCheck;
 use Hei\ScarlettPlayer\Doctor\Checks\QueueConnectionCheck;
 use Hei\ScarlettPlayer\Doctor\CheckStatus;
 use Hei\ScarlettPlayer\Stores\NullBeaconStore;
@@ -20,6 +22,27 @@ function runCheck(string $class): CheckResult
 {
     return app($class)->run();
 }
+
+describe('partner checks on a host that never adopted partners', function (): void {
+    it('passes the partner embed check when there is no partner table', function (): void {
+        $result = runCheck(PartnerEmbedCheck::class);
+
+        expect($result->status)->toBe(CheckStatus::Pass)
+            ->and($result->message)->toContain('not in use');
+    });
+
+    it('passes the beacon partner column check when there is no partner table', function (): void {
+        expect(runCheck(BeaconPartnerColumnsCheck::class)->status)->toBe(CheckStatus::Pass);
+    });
+
+    it('passes both when the partner table exists and holds no partner', function (): void {
+        $this->usesMigrations();
+        $this->artisan('migrate')->assertSuccessful();
+
+        expect(runCheck(PartnerEmbedCheck::class)->status)->toBe(CheckStatus::Pass)
+            ->and(runCheck(BeaconPartnerColumnsCheck::class)->status)->toBe(CheckStatus::Pass);
+    });
+});
 
 describe('media mapping', function (): void {
     it('fails when media.model is not configured', function (): void {

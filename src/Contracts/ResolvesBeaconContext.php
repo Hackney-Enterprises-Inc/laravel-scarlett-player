@@ -22,6 +22,12 @@ interface ResolvesBeaconContext
      * under scarlett_views.server (merged per key, newest beacon winning). Return
      * null for a key to strip the browser's copy without storing anything.
      *
+     * The key `scarlett_partner` is reserved: the package sets it, outside this map,
+     * only from a verified partner proof on the beacon URL, and returning it throws
+     * InvalidBeaconContextException (the beacon is answered 500 and nothing is
+     * queued). Any other key, including a host custom dimension named `partner`, is
+     * unaffected.
+     *
      * Runs on the request path for every beacon, so keep it cheap and never let it
      * throw for a guest: the beacon route has no auth middleware, guests beacon too.
      * An exception is not caught: the beacon is answered 500 and lost.

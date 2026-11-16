@@ -9,6 +9,7 @@ use Hei\ScarlettPlayer\Data\BeaconPayload;
 use Hei\ScarlettPlayer\Exceptions\InvalidBeaconContextException;
 use Hei\ScarlettPlayer\Http\Requests\BeaconRequest;
 use Hei\ScarlettPlayer\Jobs\ProcessBeacon;
+use Hei\ScarlettPlayer\Partners\PartnerBeaconContext;
 use Illuminate\Contracts\Bus\Dispatcher;
 use Illuminate\Contracts\Config\Repository;
 use Illuminate\Contracts\Container\Container;
@@ -59,11 +60,23 @@ class BeaconController
     }
 
     /**
-     * The payload with the server context from beacons.context, or unchanged when none
-     * is configured.
+     * The payload with the verified partner proof, if the beacon URL carries a valid
+     * one, and the server context from beacons.context, or unchanged when neither
+     * applies.
+     *
+     * The partner ref rides in its own payload property, not in the server map, so the
+     * single withServer() call below (it replaces the map wholesale) cannot drop it, and
+     * a host context or pipeline step cannot set it: withServer() refuses the reserved
+     * key. Verification reads the request only, never the database.
      */
     private function withContext(BeaconPayload $payload, Request $request, Repository $config, Container $container): BeaconPayload
     {
+        $proof = PartnerBeaconContext::verify($request, $payload);
+
+        if ($proof !== null) {
+            $payload = $payload->withVerifiedPartner($proof);
+        }
+
         $class = $config->get('scarlett-player.beacons.context');
 
         if (! is_string($class) || $class === '') {

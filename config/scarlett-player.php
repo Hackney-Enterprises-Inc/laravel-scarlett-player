@@ -431,12 +431,17 @@ return [
          * Bare host names (e.g. 'example.com') allowed to frame the embed page and to
          * appear as a shareUrl; each also allows its subdomains. A scheme, port, path or
          * leading '*.' is stripped; anything that is still not a host name throws.
-         * Empty allows every domain.
+         * Empty allows every domain. Partner embeds take their own origins from the
+         * scarlett_partners table, never from this list; but with partners in use,
+         * set this to your own sites, or ordinary signed embed URLs of the same media
+         * are still framed by '*' (the partner lock is per deployment, not per media).
          */
         'allowed_domains' => [],
 
         /**
-         * Sign every embed URL, not only those for protected media.
+         * Sign every embed URL, not only those for protected media. Required once
+         * partners exist: scarlett:doctor fails without it, and the partner snippet
+         * command refuses.
          */
         'always_sign' => false,
 

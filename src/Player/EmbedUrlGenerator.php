@@ -54,8 +54,17 @@ class EmbedUrlGenerator
         int|string $width = 640,
         int|string $height = 360,
     ): string {
+        return $this->iframe($this->embedUrl($media, $expires), $media, $width, $height);
+    }
+
+    /**
+     * The iframe snippet around a ready-made page URL: the one place the attributes are
+     * decided, so a partner snippet carries exactly what embedCode() does.
+     */
+    public function iframe(string $src, MediaSource $media, int|string $width = 640, int|string $height = 360): string
+    {
         $attributes = [
-            'src' => $this->embedUrl($media, $expires),
+            'src' => $src,
             'width' => (string) $width,
             'height' => (string) $height,
             'frameborder' => '0',

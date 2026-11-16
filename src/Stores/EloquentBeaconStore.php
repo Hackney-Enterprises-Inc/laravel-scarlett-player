@@ -280,6 +280,11 @@ class EloquentBeaconStore implements BeaconStore
         self::ERRORS => ['stalled'],
     ];
 
+    /** Columns added by the partner attribution upgrade (migration 12), also checked by doctor. */
+    public const PARTNER_COLUMNS = [
+        self::VIEWS => ['partner_ref'],
+    ];
+
     /**
      * Wire gauge key => [canonical ratio column, its stamp]. The legacy LATEST
      * columns keep the received wire values; these hold the normalized 0..1
@@ -469,6 +474,11 @@ class EloquentBeaconStore implements BeaconStore
             $row[$column] = $value;
         }
 
+        // The row is created from this beacon, so its video_id is the proof's media.
+        foreach ($this->partnerRef($payload) as $column => $value) {
+            $row[$column] = $value;
+        }
+
         foreach ($this->trueWins($payload) as $column => $value) {
             $row[$column] = $value;
         }
@@ -533,6 +543,19 @@ class EloquentBeaconStore implements BeaconStore
         foreach ([...$this->eventStamps($payload), ...$this->setOnce($connection, $payload)] as $column => $value) {
             $sets[] = $grammar->wrap($column).' = COALESCE('.$col($column).', ?)';
             $bindings[] = $value;
+        }
+
+        // Partner attribution: set once (first partner wins) AND only while the stored
+        // row is for the media the verified proof names. A view id already stored for
+        // another video is never attributed by a proof for this one. One conditional
+        // assignment in the same write, so no read-then-write race on any engine.
+        // MySQL and MariaDB compare strings by the column collation, case-insensitive by
+        // default, so the media is compared as bytes there; the other engines already do.
+        $mediaMatch = in_array($connection->getDriverName(), ['mysql', 'mariadb'], true) ? 'CAST(? AS BINARY)' : '?';
+
+        foreach ($this->partnerRef($payload) as $column => $value) {
+            $sets[] = $grammar->wrap($column).' = CASE WHEN '.$col($column).' IS NULL AND '.$col('video_id').' = '.$mediaMatch.' THEN ? ELSE '.$col($column).' END';
+            array_push($bindings, $payload->videoId, $value);
         }
 
         // True wins: a true is written outright (idempotent), a false only fills.
@@ -970,6 +993,23 @@ class EloquentBeaconStore implements BeaconStore
     }
 
     /**
+     * The verified partner ref, as the one column it is written to, or nothing when the
+     * beacon carries no verified proof or the table has no partner_ref column. Only the
+     * payload's own partner property counts: never the server map or a custom
+     * dimension, so nothing a browser or a pipeline step set can reach the column.
+     * Callers assign it set-once and only for the proof's media (the merge checks the
+     * stored video_id).
+     *
+     * @return array<string, string>
+     */
+    private function partnerRef(BeaconPayload $payload): array
+    {
+        $ref = $payload->partnerRef();
+
+        return $ref === null ? [] : $this->supportedSignals(['partner_ref' => $ref]);
+    }
+
+    /**
      * The host's id for the viewer: the server context value under
      * beacons.viewer_ref_key, when it is a non-empty string or an integer. Only the
      * server context counts, never a browser dimension of that name, and a guest
@@ -1130,6 +1170,7 @@ class EloquentBeaconStore implements BeaconStore
             ...(self::SIGNAL_COLUMNS[$table] ?? []), ...(self::RECONNECT_COLUMNS[$table] ?? []),
             ...(self::GAUGE_COLUMNS[$table] ?? []), ...(self::DIAGNOSTIC_COLUMNS[$table] ?? []),
             ...(self::CLOCK_COLUMNS[$table] ?? []), ...(self::START_STATE_COLUMNS[$table] ?? []),
+            ...(self::PARTNER_COLUMNS[$table] ?? []),
         ];
 
         return array_filter($columns, fn (string $column): bool => ! in_array($column, $optional, true)
