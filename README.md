@@ -1886,6 +1886,28 @@ attribute, such as `class`, goes on the container.
   loaded once per page. `embedAddonUrls()` on the builder lists them if you write the tags
   yourself. Keep the addons in the same version directory as the bundle: an addon refuses
   an embed of another version. Captions need no addon.
+- **Embed addons from player 1.28.0.** Player 1.28.0 also ships analytics, sharing and the
+  media session as addon files. What a loaded addon does depends on the build: the Full
+  build (`embed.js`) has all of them bundled, and a loaded addon replaces its copy; the
+  Video build replaces its bundled share and adds analytics and the media session, which
+  it never carried; the Audio build keeps its bundled media session (the player refuses the
+  addon), has no video share UI, and only gains analytics. So the package skips the share
+  and media-session addons on an Audio bundle, and skips share when controls are off. When `player.player_version` is 1.28.0 or later, the component and the embed page load,
+  after chapters and clips and in this order, `embed.addon.analytics` when analytics is on,
+  `embed.addon.share` when a share URL is set and `embed.addon.media-session` when the
+  player has a title, by the same directory, flavour and once-per-page rules.
+  `PlayerConfigBuilder::hasSplitAddons()` is the gate (`SPLIT_ADDONS_SINCE`): the pin must be
+  plain `major.minor.patch` and is compared as numbers. A pin below 1.28.0, including the
+  default 1.27.1, loads only chapters and clips as before, because those directories have
+  no other addon file. So does a pin that is not a version (`latest`, `dev`, a `v` prefix,
+  a pre-release suffix): the package cannot tell what that directory holds. The gate reads
+  the pin, not the bundle URL, so keep `player.player_version` equal to the version
+  `player.embed_bundle` really serves.
+
+  Upgrade note for Video and Audio build hosts: those builds ignore analytics on 1.27.1
+  (the player warns `data-analytics-beacon-url ignored`). On a 1.28.0 or later pin the
+  analytics addon loads, so views and beacons start arriving. A Video build also gains a
+  media session on titled media.
 - **Embed clips** post to the clips route with the page's cookies and `X-CSRF-TOKEN` from
   the page's `<meta name="csrf-token">` (the component emits `data-clips-csrf="meta"`, the
   opt-in the embed requires). So they work on your own pages, under the same recipes as
@@ -1907,6 +1929,18 @@ plugin (`data-analytics-*`): an embed iframe beaconing cross-origin is exactly t
 CORS recipe under Beacons exists for. It never enables clips: in someone else's iframe there
 is no session and no CSRF meta tag of yours to send. It carries no chapters or captions either,
 since the `MediaSource` has no field for them. Publish the view with `--tag=scarlett-views`.
+
+What the page loads: the embed bundle, then the addon files `embedAddonUrls()` lists for the
+page's own config, with the same rules as the component (same directory and flavour,
+`type="module"` beside an ES module bundle). On a pin below 1.28.0, which includes the default
+1.27.1, that list is empty and the page loads the bundle alone, as before: analytics, sharing
+and the media session come from inside the Full bundle. On a pin of 1.28.0 or later it loads
+`embed.addon.analytics` when the page beacons, `embed.addon.share` when a valid `shareUrl`
+was given (never on a partner page, which has no share sheet) and `embed.addon.media-session`
+when the media has a title, in that order. A pin that is not a plain `major.minor.patch`
+version loads none of them (see "Embed addons from player 1.28.0" above). A view published
+before this release has no addon loop: republish it, or add the loop from the package's
+`embed.blade.php`, before pinning 1.28.0 or later.
 
 `embed.allowed_domains` takes bare host names (`example.com`, which also allows its
 subdomains). A scheme, port, path or leading `*.` is stripped, and anything that is still not

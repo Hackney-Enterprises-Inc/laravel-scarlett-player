@@ -32,5 +32,11 @@
 <body>
     <div id="scarlett-embed" @foreach ($builder->toDataAttributes() as $name => $value) {{ $name }}="{{ $value }}" @endforeach></div>
     <script src="{{ $builder->embedBundleUrl() }}"@if ($builder->embedBundleIsModule()) type="module"@endif></script>
+    {{-- Addons after the bundle, from the same version directory: an addon refuses an embed of another version. --}}
+    @foreach ($builder->embedAddonUrls() as $addonUrl)
+    @once('scarlett-addon:'.$addonUrl)
+    <script src="{{ $addonUrl }}"@if ($builder->embedBundleIsModule()) type="module"@endif></script>
+    @endonce
+    @endforeach
 </body>
 </html>

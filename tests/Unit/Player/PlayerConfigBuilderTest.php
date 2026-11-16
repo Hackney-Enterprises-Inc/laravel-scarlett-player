@@ -491,6 +491,129 @@ it('names the addon files the embed config needs, beside the bundle and in its f
         ->toBe(['https://cdn.example.test/scarlett-player/latest/embed.addon.clips.umd.cjs']);
 });
 
+/** An embed builder with every feature that has an addon from player 1.28.0, and no chapters or clips. */
+function splitAddonBuilder(): PlayerConfigBuilder
+{
+    return ScarlettPlayer::for('video-1')->mode('embed')->title('Main event')
+        ->withAnalytics()
+        ->withShare('https://host.test/watch/1');
+}
+
+it('adds the analytics, share and media-session addons from player 1.28.0, after chapters and clips', function (string $bundle, string $extension): void {
+    config()->set('scarlett-player.player.cdn_url', 'https://cdn.example.test/scarlett-player');
+    config()->set('scarlett-player.player.player_version', '1.28.0');
+    config()->set('scarlett-player.player.embed_bundle', $bundle);
+
+    $base = 'https://cdn.example.test/scarlett-player/v1.28.0/embed.addon.';
+
+    expect(splitAddonBuilder()->withClips()->withChapters([])->withCaptions([])->embedAddonUrls())->toBe([
+        "{$base}chapters{$extension}",
+        "{$base}clips{$extension}",
+        "{$base}analytics{$extension}",
+        "{$base}share{$extension}",
+        "{$base}media-session{$extension}",
+    ]);
+})->with([
+    'ES module bundle' => ['{cdn_url}/v{player_version}/embed.js', '.js'],
+    'UMD bundle' => ['{cdn_url}/v{player_version}/embed.umd.cjs?v=2', '.umd.cjs'],
+]);
+
+it('adds each 1.28.0 addon only for the feature the config carries', function (): void {
+    config()->set('scarlett-player.player.cdn_url', 'https://cdn.example.test/scarlett-player');
+    config()->set('scarlett-player.player.player_version', '1.28.0');
+
+    $base = 'https://cdn.example.test/scarlett-player/v1.28.0/embed.addon.';
+    $embed = fn (): PlayerConfigBuilder => ScarlettPlayer::for('video-1')->mode('embed');
+
+    expect($embed()->embedAddonUrls())->toBe([])
+        ->and($embed()->withCaptions([])->embedAddonUrls())->toBe([])
+        ->and($embed()->withAnalytics()->embedAddonUrls())->toBe(["{$base}analytics.js"])
+        ->and($embed()->withShare('https://host.test/watch/1')->embedAddonUrls())->toBe(["{$base}share.js"])
+        ->and($embed()->title('Main event')->embedAddonUrls())->toBe(["{$base}media-session.js"])
+        // An empty title is no title: nothing for the media session to show.
+        ->and($embed()->title('')->embedAddonUrls())->toBe([])
+        ->and($embed()->title('Main event')->title(null)->embedAddonUrls())->toBe([])
+        // Module mode loads no embed file at all.
+        ->and(ScarlettPlayer::for('video-1')->title('Main event')->withAnalytics()->withShare('https://host.test/watch/1')->embedAddonUrls())->toBe([]);
+});
+
+it('loads the 1.28.0 addons for a pin at or above 1.28.0, compared as numbers', function (string $pin): void {
+    config()->set('scarlett-player.player.cdn_url', 'https://cdn.example.test/scarlett-player');
+    config()->set('scarlett-player.player.player_version', $pin);
+
+    $base = "https://cdn.example.test/scarlett-player/v{$pin}/embed.addon.";
+
+    expect(PlayerConfigBuilder::hasSplitAddons($pin))->toBeTrue()
+        ->and(splitAddonBuilder()->embedAddonUrls())->toBe(["{$base}analytics.js", "{$base}share.js", "{$base}media-session.js"]);
+})->with(['1.28.0', '1.28.1', '1.29.0', '1.100.0', '2.0.0', '10.0.0']);
+
+it('loads none of the 1.28.0 addons for an older pin or one that is not major.minor.patch', function (string $pin): void {
+    config()->set('scarlett-player.player.cdn_url', 'https://cdn.example.test/scarlett-player');
+    config()->set('scarlett-player.player.player_version', $pin);
+
+    expect(PlayerConfigBuilder::hasSplitAddons($pin))->toBeFalse()
+        ->and(splitAddonBuilder()->embedAddonUrls())->toBe([]);
+})->with([
+    'the default pin' => ['1.27.1'],
+    'a high patch below the minor' => ['1.27.99'],
+    'a lower major' => ['0.99.0'],
+    'a minor that only sorts higher as text' => ['1.3.0'],
+    'latest' => ['latest'],
+    'dev' => ['dev'],
+    'empty' => [''],
+    'two parts' => ['1.28'],
+    'a v prefix' => ['v1.28.0'],
+    'a pre-release' => ['1.28.0-beta.1'],
+    'a wildcard' => ['1.28.x'],
+    'four parts' => ['1.28.0.1'],
+    'a leading zero on the major' => ['01.28.0'],
+    'a leading zero on the minor' => ['1.028.0'],
+    'a leading zero on the patch' => ['1.28.00'],
+    'padded' => [' 1.28.0'],
+    'garbage' => ['not a version'],
+]);
+
+it('skips the share and media-session addons on the Audio build and keeps analytics', function (string $bundle): void {
+    config()->set('scarlett-player.player.cdn_url', 'https://cdn.example.test/scarlett-player');
+    config()->set('scarlett-player.player.player_version', '1.28.0');
+    config()->set('scarlett-player.player.embed_bundle', $bundle);
+
+    $urls = splitAddonBuilder()->embedAddonUrls();
+
+    expect($urls)->toHaveCount(1)
+        ->and($urls[0])->toContain('embed.addon.analytics.')
+        ->and(ScarlettPlayer::for('video-1')->mode('embed')->title('Main event')->withShare('https://host.test/w')->embedAddonUrls())->toBe([]);
+})->with(['{cdn_url}/v{player_version}/embed.audio.js', '{cdn_url}/v{player_version}/embed.audio.umd.cjs']);
+
+it('keeps all three addons on the Video build', function (): void {
+    config()->set('scarlett-player.player.cdn_url', 'https://cdn.example.test/scarlett-player');
+    config()->set('scarlett-player.player.player_version', '1.28.0');
+    config()->set('scarlett-player.player.embed_bundle', '{cdn_url}/v{player_version}/embed.video.js');
+
+    expect(splitAddonBuilder()->embedAddonUrls())->toHaveCount(3);
+});
+
+it('skips the share addon when controls are off, and keeps the rest', function (): void {
+    config()->set('scarlett-player.player.cdn_url', 'https://cdn.example.test/scarlett-player');
+    config()->set('scarlett-player.player.player_version', '1.28.0');
+
+    $base = 'https://cdn.example.test/scarlett-player/v1.28.0/embed.addon.';
+
+    expect(splitAddonBuilder()->controls(false)->embedAddonUrls())->toBe(["{$base}analytics.js", "{$base}media-session.js"])
+        ->and(splitAddonBuilder()->controls(false)->controls()->embedAddonUrls())->toHaveCount(3);
+});
+
+it('keeps chapters and clips exactly as they were on a pin below 1.28.0', function (): void {
+    config()->set('scarlett-player.player.cdn_url', 'https://cdn.example.test/scarlett-player');
+
+    expect(PlayerConfigBuilder::DEFAULT_PLAYER_VERSION)->toBe('1.27.1')
+        ->and(PlayerConfigBuilder::SPLIT_ADDONS_SINCE)->toBe('1.28.0')
+        ->and(splitAddonBuilder()->withClips()->withChapters([])->embedAddonUrls())->toBe([
+            'https://cdn.example.test/scarlett-player/v1.27.1/embed.addon.chapters.js',
+            'https://cdn.example.test/scarlett-player/v1.27.1/embed.addon.clips.js',
+        ]);
+});
+
 it('accepts the longest interval browsers honour and rejects 1e300 seconds from the setter', function (): void {
     config()->set('scarlett-player.player.heartbeat_interval', 2147483.647);
 

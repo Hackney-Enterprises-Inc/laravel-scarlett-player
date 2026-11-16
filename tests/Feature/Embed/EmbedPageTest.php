@@ -227,11 +227,134 @@ it('renders the embed page with a configured heartbeat interval, which embed mod
 });
 
 it('keeps clips off the embed page, which has no session or csrf meta tag of the host', function (): void {
-    $content = (string) $this->get('/v/video-1')->assertOk()->getContent();
+    // The default pin (below 1.28.0): the page loads the bundle and no addon at all.
+    expect(config('scarlett-player.player.player_version'))->toBe('1.27.1');
+
+    $content = (string) $this->get('/v/branded?shareUrl='.urlencode('https://anywhere.test/watch'))->assertOk()->getContent();
 
     expect($content)->not->toContain('data-clips-')
-        ->and($content)->not->toContain('embed.addon.');
+        ->and($content)->not->toContain('embed.addon.')
+        ->and(embedPageScripts($content))->toBe(['https://cdn.example.test/scarlett-player/v1.27.1/embed.js']);
+
+    // From 1.28.0 the page loads addons, never the clips or chapters ones.
+    config()->set('scarlett-player.player.player_version', '1.28.0');
+
+    $content = (string) $this->get('/v/branded?shareUrl='.urlencode('https://anywhere.test/watch'))->assertOk()->getContent();
+
+    expect($content)->not->toContain('data-clips-')
+        ->and($content)->not->toContain('data-chapters')
+        ->and($content)->not->toContain('embed.addon.clips')
+        ->and($content)->not->toContain('embed.addon.chapters');
 });
+
+/**
+ * The src of every script tag on the page, in document order.
+ *
+ * @return list<string>
+ */
+function embedPageScripts(string $html): array
+{
+    preg_match_all('#<script src="([^"]+)"#', $html, $scripts);
+
+    return $scripts[1];
+}
+
+it('loads the analytics addon after the bundle on a 1.28.0 pin', function (): void {
+    config()->set('scarlett-player.player.player_version', '1.28.0');
+
+    $content = (string) $this->get('/v/video-1')->assertOk()->getContent();
+    $base = 'https://cdn.example.test/scarlett-player/v1.28.0';
+
+    // video-1 has no title and the request no shareUrl: analytics is all the page needs.
+    expect(embedPageScripts($content))->toBe(["{$base}/embed.js", "{$base}/embed.addon.analytics.js"])
+        ->and($content)->toContain('<script src="'.$base.'/embed.js" type="module"></script>')
+        ->and($content)->toContain('<script src="'.$base.'/embed.addon.analytics.js" type="module"></script>')
+        ->and($content)->not->toContain('nonce=')
+        ->and($content)->not->toContain('data-title');
+});
+
+it('loads the share addon only with a shareUrl and the media-session addon only for titled media, in order', function (): void {
+    config()->set('scarlett-player.player.player_version', '1.28.0');
+
+    $base = 'https://cdn.example.test/scarlett-player/v1.28.0';
+    $share = '?shareUrl='.urlencode('https://anywhere.test/watch');
+
+    expect(embedPageScripts((string) $this->get('/v/branded'.$share)->assertOk()->assertSee('data-title="Fight night"', false)->getContent()))->toBe([
+        "{$base}/embed.js",
+        "{$base}/embed.addon.analytics.js",
+        "{$base}/embed.addon.share.js",
+        "{$base}/embed.addon.media-session.js",
+    ])
+        ->and(embedPageScripts((string) $this->get('/v/branded')->getContent()))->toBe([
+            "{$base}/embed.js",
+            "{$base}/embed.addon.analytics.js",
+            "{$base}/embed.addon.media-session.js",
+        ])
+        ->and(embedPageScripts((string) $this->get('/v/video-1'.$share)->getContent()))->toBe([
+            "{$base}/embed.js",
+            "{$base}/embed.addon.analytics.js",
+            "{$base}/embed.addon.share.js",
+        ])
+        // A shareUrl the middleware dropped configures no share, so no share addon.
+        ->and(embedPageScripts((string) $this->get('/v/video-1?shareUrl='.urlencode('javascript:alert(1)'))->getContent()))->toBe([
+            "{$base}/embed.js",
+            "{$base}/embed.addon.analytics.js",
+        ]);
+});
+
+it('loads the 1.28.0 addons as classic scripts beside a UMD bundle', function (): void {
+    config()->set('scarlett-player.player.player_version', '1.28.0');
+    config()->set('scarlett-player.player.embed_bundle', '{cdn_url}/v{player_version}/embed.umd.cjs');
+
+    $content = (string) $this->get('/v/branded')->assertOk()->getContent();
+    $base = 'https://cdn.example.test/scarlett-player/v1.28.0';
+
+    expect(embedPageScripts($content))->toBe([
+        "{$base}/embed.umd.cjs",
+        "{$base}/embed.addon.analytics.umd.cjs",
+        "{$base}/embed.addon.media-session.umd.cjs",
+    ])
+        ->and($content)->toContain('<script src="'.$base.'/embed.addon.analytics.umd.cjs"></script>')
+        ->and($content)->not->toContain('type="module"');
+});
+
+it('loads no analytics addon when the page does not beacon', function (): void {
+    config()->set('scarlett-player.player.player_version', '1.28.0');
+    config()->set('scarlett-player.beacons.key', '');
+
+    expect(embedPageScripts((string) $this->get('/v/video-1')->assertOk()->getContent()))
+        ->toBe(['https://cdn.example.test/scarlett-player/v1.28.0/embed.js']);
+});
+
+it('loads only the bundle on a pin below 1.28.0 or one that is not a version', function (string $pin): void {
+    config()->set('scarlett-player.player.player_version', $pin);
+
+    $content = (string) $this->get('/v/branded?shareUrl='.urlencode('https://anywhere.test/watch'))->assertOk()->getContent();
+
+    expect(embedPageScripts($content))->toBe(["https://cdn.example.test/scarlett-player/v{$pin}/embed.js"])
+        ->and($content)->not->toContain('embed.addon.')
+        ->and($content)->toContain('data-analytics-video-id="branded"')
+        ->and($content)->toContain('data-share-url="https://anywhere.test/watch"')
+        ->and($content)->toContain('data-title="Fight night"');
+})->with(['1.27.1', '1.27.99', 'latest', 'dev', 'not-a-version']);
+
+it('loads the same scripts, in the same order, as the Blade component does for the same config', function (string $pin, string $bundle): void {
+    config()->set('scarlett-player.player.player_version', $pin);
+    config()->set('scarlett-player.player.embed_bundle', $bundle);
+
+    $page = (string) $this->get('/v/branded?shareUrl='.urlencode('https://anywhere.test/watch'))->assertOk()->getContent();
+    $component = (string) $this->blade('<x-scarlett-player media="branded" mode="embed" analytics share-url="https://anywhere.test/watch" />');
+
+    preg_match_all('#<script src="[^"]+"[^>]*></script>#', $page, $pageTags);
+    preg_match_all('#<script src="[^"]+"[^>]*></script>#', $component, $componentTags);
+
+    expect($pageTags[0])->toBe($componentTags[0])
+        ->and($pageTags[0])->toHaveCount($pin === '1.28.0' ? 4 : 1);
+})->with([
+    '1.28.0, ES module' => ['1.28.0', '{cdn_url}/v{player_version}/embed.js'],
+    '1.28.0, UMD' => ['1.28.0', '{cdn_url}/v{player_version}/embed.umd.cjs'],
+    '1.27.1, ES module' => ['1.27.1', '{cdn_url}/v{player_version}/embed.js'],
+]);
 
 it('leaves analytics off the embed page without a key, or with beacons off', function (string $key, mixed $value): void {
     config()->set("scarlett-player.{$key}", $value);
